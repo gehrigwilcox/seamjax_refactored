@@ -3,7 +3,7 @@ Centred on your room the match is within the room's own wobble (rooms are not pe
 import _setup, math
 import numpy as np, jax, jax.numpy as jnp
 from seamjax.gen import load_specs, gen_dungeon
-from seamjax.minimap import chart, orient
+from seamjax.app.minimap import chart, orient
 SP = load_specs(); CX, CY = 480., 300.; rng = np.random.default_rng(3)
 from seamjax.core.geometry.view import view_np as view
 gd = jax.jit(lambda k, f: gen_dungeon(SP, k, f))
@@ -22,10 +22,9 @@ for f in (1, 2, 3, 4, 5, 6, 7, 8, 9, 12):
         L = dict(sig=(f, seed), m=m, C=d.map_pos[:m].astype(float), geo=geo, doors=d.doors[:m], dseam=d.door_seam[:m], ns=d.n[:m], flip=False, ckey=None)
         for r in range(m):
             va, mir = rng.uniform(-math.pi, math.pi), float(rng.choice([-1., 1.]))
-            c = dict(n=int(d.n[r]), doors=d.doors[r], side=d.sides[r])
-            ch = chart(L, r); th, flip = orient(L, ch['P'], r, c, va, mir, view); e = err(L, ch, r, d, va, mir, th, flip)
+            ch = chart(L, r); th, flip = orient(L, ch['P'], r, int(d.n[r]), d.doors[r], d.sides[r], va, mir); e = err(L, ch, r, d, va, mir, th, flip)
             if e: worst_follow = max(worst_follow, max(e)); cats[geo] = max(cats.get(geo, 0.), max(e))
-            ch = chart(L, None); th, flip = orient(L, ch['P'], r, c, va, mir, view); e = err(L, ch, r, d, va, mir, th, flip)
+            ch = chart(L, None); th, flip = orient(L, ch['P'], r, int(d.n[r]), d.doors[r], d.sides[r], va, mir); e = err(L, ch, r, d, va, mir, th, flip)
             if e: fixed.append(np.mean(e))
 print('worst door-direction error when centred on your room: %.2f deg  (by world kind %s)' % (worst_follow, {k: round(v, 2) for k, v in cats.items()}))
 print('fixed whole-dungeon chart: mean error %.1f deg, 90th percentile %.1f deg' % (np.mean(fixed), np.percentile(fixed, 90)))

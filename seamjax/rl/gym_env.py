@@ -26,7 +26,7 @@ from gymnasium.vector import VectorEnv, AutoresetMode
 from seamjax.core import struct
 from seamjax.sim.game import Game, info as step_info
 from seamjax.sim.observe import observe, OBS_DIM
-from seamjax.render import render
+from seamjax.rl.render import render
 
 _CACHE = {}
 def _core(frame_skip):
@@ -113,4 +113,4 @@ class SeamVectorEnv(VectorEnv):
         obs_after = np.array(self.C['obs_b'](S)) if over.any() else obs
         return obs_after, np.array(r, np.float32), done, trunc & ~done, info
 
-gym.register('Seam-v0', entry_point='seamjax.gym_env:SeamEnv')
+gym.register('Seam-v0', entry_point='seamjax.rl.gym_env:SeamEnv')

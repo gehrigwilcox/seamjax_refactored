@@ -1,6 +1,6 @@
 """
 The 2-D drawing interface the HUD (text, hearts, minimap, debug overlay) is written against, so the same code draws on the GPU
-(glview.GLCanvas) or, with --software, on a pygame surface (PygameCanvas).  Coordinates are logical pixels (960 x 600, y down);
+(gl/canvas.py, GLCanvas) or, with --software, on a pygame surface (PygameCanvas).  Coordinates are logical pixels (960 x 600, y down);
 colours are (r, g, b) or (r, g, b, a) in 0..255.
 
     begin(bg=None)                       start a frame (bg clears everything first)

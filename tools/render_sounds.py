@@ -2,7 +2,7 @@
     python tools/render_sounds.py [out_dir]     -> one file per sound plus sampler.wav (all of them in a row)"""
 import _path, os, sys, wave
 import numpy as np
-from seamjax import audio
+from seamjax.app import audio
 out = sys.argv[1] if len(sys.argv) > 1 else 'sounds'; os.makedirs(out, exist_ok=True)
 def save(path, x):
     with wave.open(path, 'wb') as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(audio.SR); w.writeframes((np.clip(x, -1, 1)*32000).astype('<i2').tobytes())

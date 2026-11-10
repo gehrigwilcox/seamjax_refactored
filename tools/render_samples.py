@@ -2,7 +2,7 @@
 import _path, sys
 import numpy as np, jax, jax.numpy as jnp
 from seamjax import Game
-from seamjax.render import render, save_png
+from seamjax.rl.render import render, save_png
 f = int(sys.argv[1]) if len(sys.argv) > 1 else 8
 G = Game.generated(); S = jax.jit(jax.vmap(G.reset))(jax.random.split(jax.random.PRNGKey(5), 16), jnp.full(16, f))
 imgs = []

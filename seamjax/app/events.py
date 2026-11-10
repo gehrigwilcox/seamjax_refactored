@@ -1,6 +1,6 @@
 """
 Game events for the viewer, found by comparing each snapshot with the previous one (the simulation itself stays pure and
-knows nothing about effects or sound).  Both the visual effects (glview.Fx) and the sound (audio.Audio) consume these.
+knows nothing about effects or sound).  Both the visual effects (gl/fx.py) and the sound (audio.Audio) consume these.
 
 An event is a dict: name, x, y (world position in the current room) and sometimes `shooter`.  Names:
   shoot  hit  heal  kill  death  hunter_hit  hunter_die  open  descend  newrun
@@ -14,8 +14,8 @@ class Events:
 
     def update(self, sn, key, gen, dead, opened=False):
         """key = (gen, room); gen changes whenever a new floor / run is generated"""
-        en = sn['en']; alive = np.asarray(en.alive); hp = int(sn['hp']); nb = int(np.asarray(sn['pb'].alive).sum())
-        hh = float(sn['hhp']); hal = float(sn['hdead']) <= 0; x, y = float(sn['x']), float(sn['y']); P = self.prev; ev = []
+        en = sn.enemies; alive = np.asarray(en.alive); hp = int(sn.player.hp); nb = int(np.asarray(sn.pb.alive).sum())
+        hh = float(sn.hunter.hp); hal = float(sn.hunter.dead) <= 0; x, y = float(sn.player.x), float(sn.player.y); P = self.prev; ev = []
         E = lambda name, px=x, py=y, **kw: ev.append(dict(name=name, x=float(px), y=float(py), **kw))
         if P is not None and P['gen'] == gen:
             if hp < P['hp']: E('hit')
@@ -24,10 +24,10 @@ class Events:
             if opened: E('open')
             if P['key'] == key:
                 for i in np.where(P['alive'] & ~alive)[0]: E('kill', P['ex'][i], P['ey'][i], shooter=bool(P['eshooter'][i]))
-                hx, hy = float(sn['hx']), float(sn['hy'])
-                if hh < P['hh'] - .5 and bool(sn['hhere']): E('hunter_hit', hx, hy)
+                hx, hy = float(sn.hunter.x), float(sn.hunter.y)
+                if hh < P['hh'] - .5 and bool(sn.hunter.here): E('hunter_hit', hx, hy)
                 if P['hal'] and not hal: E('hunter_die', hx, hy)
-                if nb > P['nb']: a = float(sn['aim']); E('shoot', x+math.cos(a)*16, y+math.sin(a)*16)
+                if nb > P['nb']: a = float(sn.player.aim); E('shoot', x+math.cos(a)*16, y+math.sin(a)*16)
         elif P is not None: E('newrun' if P['dead'] else 'descend')
         self.prev = dict(key=key, gen=gen, ex=np.array(en.x), ey=np.array(en.y), eshooter=np.array(en.shooter), alive=alive, hp=hp, nb=nb, hh=hh, hal=hal, dead=dead)
         return ev

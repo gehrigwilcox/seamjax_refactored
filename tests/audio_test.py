@@ -1,7 +1,7 @@
 """Sound synthesis test: every effect is finite, audible, not clipping, and the loops are seamless.  Also checks the event detector."""
 import _setup, numpy as np
-from seamjax import audio
-from seamjax.events import Events
+from seamjax.app import audio
+from seamjax.app.events import Events
 B = audio.bank(); L = audio.loops()
 for n, v in B.items():
     assert v.shape[0] == audio.NVAR and np.isfinite(v).all(), n
@@ -14,16 +14,11 @@ for n, v in L.items():
     step = np.abs(np.diff(v)).max(); seam = abs(v[0]-v[-1]); assert seam <= 3*step+1e-3, (n, 'seam', seam, step)
     print('%-14s loop %.1f s  seam %.4f (largest normal step %.4f)' % (n, len(v)/audio.SR, seam, step))
 # events
-from seamjax.core.types import Enemies, Bullets
+from seamjax.core.types import Enemies
+from _fakes import pool, snapshot
 ev = Events()
-def pool(cls, n, **set0):
-    cols = {f: np.zeros(n, bool if f in ('alive', 'shooter') else float) for f in cls.fields()}
-    for f, v in set0.items(): cols[f][0] = v
-    return cls(**cols)
-def sn(**kw):
-    d = dict(en=pool(Enemies, 10, x=100, y=100, shooter=True, alive=True), hp=5, pb=pool(Bullets, 24), hhp=18., hdead=0., x=10., y=20., hx=0., hy=0., hhere=False, aim=0.)
-    d.update(kw); return d
-assert ev.update(sn(), (0, 0), 0, False) == []
-e2 = pool(Enemies, 10); k = ev.update(sn(en=e2, hp=4), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['shooter'], k
-assert [e['name'] for e in ev.update(sn(en=e2, hp=4), (1, 5), 1, False)] == ['descend']
+one = pool(Enemies, 10, [dict(x=100, y=100, shooter=True, alive=True)]); none_ = pool(Enemies, 10)
+assert ev.update(snapshot(enemies=one, player=dict(x=10., y=20., aim=0.)), (0, 0), 0, False) == []
+k = ev.update(snapshot(enemies=none_, player=dict(x=10., y=20., aim=0., hp=4)), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['shooter'], k
+assert [e['name'] for e in ev.update(snapshot(enemies=none_, player=dict(x=10., y=20., aim=0., hp=4)), (1, 5), 1, False)] == ['descend']
 print('events PASS\naudio PASS')
