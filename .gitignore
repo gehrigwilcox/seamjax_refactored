@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+# generated on first run by specs.load_specs (tiling tables cache)
+seamjax/data/
+# optional JS parity data
+tests/reference/pool.npz
