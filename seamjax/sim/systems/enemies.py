@@ -8,6 +8,7 @@ import jax, jax.numpy as jnp
 from jax import lax
 from seamjax.difficulty import difficulty, FLOOR_CAP
 from seamjax.core import pool
+from seamjax.core.ops import argsort_small
 from seamjax.core.config import (MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, CHASER_R, SHOOTER_R, CHASER_HP, SHOOTER_HP, CHASER_SPEED,
                                  CHASER_SPEED_PER_FLOOR, SHOOTER_SPEED, SHOOTER_RETREAT, SHOOTER_APPROACH, SHOOTER_STRAFE, SHOOTER_FIRST_SHOT,
                                  SHOOTER_FIRST_SHOT_RAND, SHOOTER_RELOAD, SHOOTER_RELOAD_RAND, ENEMY_BULLET_SPEED, ENEMY_BULLET_LIFE,
@@ -43,7 +44,7 @@ def spawn(s, key, sec):
     dpl = jnp.hypot(pts[:, 0]-s.player.x, pts[:, 1]-s.player.y)
     okp = mine & (dpl >= minD*.6)
     score = jax.random.uniform(k1, (N_SPAWN_POINTS,)) + jnp.where(dpl >= minD, 0., -5.) + jnp.where(okp, 0., -10.)
-    order = jnp.argsort(-score)[:NE]
+    order = argsort_small(-score)[:NE]
     shooter = jax.random.uniform(k3, (NE,)) < difficulty(floor)['shooter_p']
     new = Enemies(x=pts[order, 0], y=pts[order, 1], hp=jnp.where(shooter, SHOOTER_HP, CHASER_HP), shooter=shooter,
                   fire=SHOOTER_FIRST_SHOT + jax.random.uniform(k4, (NE,))*SHOOTER_FIRST_SHOT_RAND, telegraph=jnp.full(NE, TELEGRAPH),

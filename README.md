@@ -44,6 +44,7 @@ seamjax/            the game (everything needed to play or train)
     config.py       every constant
     struct.py       @pytree dataclasses (replace, indexing, field-wise where)
     pool.py         fixed-capacity entity pools: first_free / spawn / fill
+    ops.py          argsort_small: much faster than jnp.argsort for the tiny per-game arrays
     geometry/       collide.py (circles vs room walls and obstacles), view.py (view rotation / mirror, walking through a door)
   specs.py          catalogue of worlds + a JAX builder that grows each tiling and closes its corner loops -> constant tables
   gen.py            GPU dungeon generator: rooms, doors, loops, obstacles, inner walls, spawn points, exit
@@ -64,7 +65,7 @@ seamjax/            the game (everything needed to play or train)
 tests/              every test; `python tests/run_all.py`
   golden_test.py    refactor safety net: generator + simulation must reproduce tests/golden/trace.npz exactly (CPU)
   reference/        optional: check the JAX sim against the original JS game (needs playwright + that game)
-tools/              benchmark, sample renderer
+tools/              benchmark (bench.py), per-system timing (profile_systems.py), sample renderer
 ```
 
 ## Playing
@@ -143,8 +144,9 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 * `tests/specs_test.py` checks the device-built tables against an independent numpy construction (`tests/reference/specs_numpy.py`).
 * `tests/reference/` records dungeons and scripted walks from the original JS game to check frame-for-frame agreement
   (`python tests/reference/export_pool.py path/to/index.html`, then `python tests/reference/parity.py`). Not needed to play or train.
-* Speed (batched, `python tools/bench.py 512 2048 8192`): about 60k simulation steps per second on a laptop CPU, about 330k on a GTX 1660 SUPER
-  (flat from 512 to 8192 games: the GPU is already saturated at 512).
+* Speed (batched, `python tools/bench.py 512 2048 8192`): about 60k simulation steps per second on a laptop CPU; on a GTX 1660 SUPER
+  about 320k with 512 games, 720k with 2048 and 900k with 8192. Tiny per-game sorts are done by `core/ops.argsort_small`:
+  `jnp.argsort` of a 10-element row costs ~1.8 ms per batched call on that GPU and was half of every step.
 * Memory: building one dungeon needs about 4 MB of scratch, so dungeons are generated 64 at a time and only for games that
   just finished (`SEAM_GEN_CHUNK=256` on a big GPU for faster resets). 4096 parallel games need under 1 GB in total.
   JAX is told not to pre-reserve most of the GPU (`XLA_PYTHON_CLIENT_PREALLOCATE=false`); set it yourself to override.

@@ -15,6 +15,7 @@ from seamjax.core.config import CX, CY, MAX_SIDES as NS, MAX_HP, HUNTER_HP, INF
 from seamjax.core.types import AXIS_H, WALL_GATED
 from seamjax.core.geometry.view import view_vec
 from seamjax.core.geometry.collide import side_dist
+from seamjax.core.ops import argsort_small
 from seamjax.sim.queries import hnode, player_node, hunter_door, hunter_visible, sec_point
 
 
@@ -39,13 +40,13 @@ def observe(s):
     en = s.enemies[room]; alive = en.alive
     rx, ry = en.x-P.x, en.y-P.y
     ex_, ey_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(rx, ry)
-    dist = jnp.where(alive, jnp.hypot(rx, ry), 1e9); order = jnp.argsort(dist)[:OBS_EN]
+    dist = jnp.where(alive, jnp.hypot(rx, ry), 1e9); order = argsort_small(dist)[:OBS_EN]
     ef = jnp.stack([alive[order], ex_[order]*sc*alive[order], ey_[order]*sc*alive[order], en.shooter[order], en.hp[order]/4.*alive[order]], 1)
     eb = s.eb; balive = eb.alive
     brx, bry = eb.x-P.x, eb.y-P.y
     bx_, by_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(brx, bry)
     bvx, bvy = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(eb.vx, eb.vy)
-    bd = jnp.where(balive, jnp.hypot(brx, bry), 1e9); bo = jnp.argsort(bd)[:OBS_EB]
+    bd = jnp.where(balive, jnp.hypot(brx, bry), 1e9); bo = argsort_small(bd)[:OBS_EB]
     bf = jnp.stack([bx_[bo]*sc*balive[bo], by_[bo]*sc*balive[bo], bvx[bo]/190.*balive[bo], bvy[bo]/190.*balive[bo]], 1)
     # hunter + exit
     H = s.hunter

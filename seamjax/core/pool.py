@@ -6,6 +6,7 @@ Capacity never changes (jit needs fixed shapes): spawning into a full pool does 
 """
 import jax, jax.numpy as jnp
 from seamjax.core import struct
+from seamjax.core.ops import argsort_small
 
 
 def first_free(pool):
@@ -25,7 +26,7 @@ def fill(pool, new):
     """put the rows of `new` (a pool of the same capacity) into the free slots, in order: the i-th free slot gets row i.
     Occupied slots are kept; rows beyond the number of free slots are dropped."""
     free = ~pool.alive
-    slot = jnp.argsort(~free)                                        # free slots first, in slot order
+    slot = argsort_small(~free)                                      # free slots first, in slot order
     return jax.tree_util.tree_map(lambda o, v: o.at[slot].set(jnp.where(free[slot], v, o[slot])), pool, new)
 
 def set_row(pools, r, rows):
