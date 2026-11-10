@@ -8,6 +8,20 @@ from seamjax.core.config import *
 SP=load_specs(); E=Game(gen_source(SP))
 B=64; S=jax.jit(jax.vmap(E.reset))(jax.random.split(jax.random.PRNGKey(11),B), jnp.full(B,8))
 step=jax.jit(E.step); trans=jax.jit((lambda s_,k_: _transit(s_, no_events(), k_)[0]))
+from seamjax.core import struct
+@jax.jit
+def walk(s, r, want):
+    """up to 240 frames walking in room-frame direction `want` (invulnerable, no Hunter); frozen once you leave room r.
+    Returns (state, left the room)"""
+    def body(c, _):
+        s, left = c
+        s_ = s.replace(player=s.player.replace(inv=jnp.float32(5.)), hunter=s.hunter.replace(dead=jnp.float32(1e9)))
+        vx, vy = view_vec(s_.view_angle, s_.mirror, want[0], want[1])
+        s2 = E.step(s_, jnp.stack([vx, vy, 0., 0.]))[0]
+        s2 = struct.where(left, s.replace(dun=None), s2.replace(dun=None)).replace(dun=s.dun)
+        return (s2, left | (s2.room != r)), None
+    (s, left), _ = jax.lax.scan(body, (s, jnp.bool_(False)), None, length=240)
+    return s, left
 res=dict(gated=0,gate_opened=0,solid=0,solid_closed=0,blocked=0,blocked_n=0,spawn_only_own=0,spawn_n=0,reward_gate=0,exit_same_sec=0,exit_n=0)
 for i in range(B):
     s=S[i]; d=s.dun; wk=np.array(d.wall_kind); wax=np.array(d.wall_axis); wp=np.array(d.wall_pos); ds=np.array(d.door_sec); dn=np.array(d.doors)
@@ -35,15 +49,11 @@ for i in range(B):
                 res['solid']+=1; res['solid_closed']+=int(not bool(s3.wall_open[r]))
             # the wall blocks: walk straight at it from your side, you must stay on your side (solid) 
             if wk[r]==1:
-                s4=s2
-                for f in range(240):
-                    # steer toward the other side of the wall in room coordinates, expressed as screen input
-                    wantx,wanty=(0.,1.) if wax[r]==1 else (1.,0.)
-                    if sec==1: wantx,wanty=-wantx,-wanty
-                    vx,vy=view_vec(s4.view_angle,s4.mirror,wantx,wanty)
-                    s4,_,_,_=step(s4.replace(player=s4.player.replace(inv=jnp.float32(5.)),hunter=s4.hunter.replace(dead=jnp.float32(1e9))),jnp.array([vx,vy,0.,0.]))
-                    if int(s4.room)!=r: break
-                if int(s4.room)==r:
+                # steer toward the other side of the wall in room coordinates, expressed as screen input
+                wantx,wanty=(0.,1.) if wax[r]==1 else (1.,0.)
+                if sec==1: wantx,wanty=-wantx,-wanty
+                s4,left=walk(s2,jnp.int32(r),jnp.array([wantx,wanty]))
+                if not bool(left):
                     res['blocked_n']+=1; res['blocked']+=int(int(sec_point(d,r,s4.player.x,s4.player.y))==sec)
 print(res)
 assert res['gated']>50 and res['solid']>30

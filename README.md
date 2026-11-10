@@ -6,7 +6,7 @@ is what you play, what the Gymnasium environments run, and what you can put on a
 ```
 uv sync                                # CPU install (works everywhere); GPU installs are below
 uv run seam                            # play it (WASD + mouse; --floor N to start deeper; --bot for a demo)
-uv run python tests/run_all.py         # run the tests
+uv run python tests/run_all.py         # run the tests, 4 at a time (--quick: a short subset; -j N: N at a time)
 uv run python tools/bench.py           # steps per second on your hardware
 ```
 
@@ -66,7 +66,7 @@ seamjax/            the game (everything needed to play or train)
   events.py         finds kills / hits / shots between snapshots (feeds effects and sound)
   audio.py          generative sound, synthesised by JAX
   glview.py         OpenGL view: floor textures, glow, particles, bloom, screen shake, all on the GPU
-tests/              every test; `python tests/run_all.py`
+tests/              every test; `python tests/run_all.py` (compiled programs are cached in ~/.cache/seamjax-jit, so repeat runs are fast)
   golden_test.py    refactor safety net: generator + simulation must reproduce tests/golden/trace.npz exactly (CPU)
   reference/        optional: check the JAX sim against the original JS game (needs playwright + that game)
 tools/              benchmark (bench.py), per-system timing (profile_systems.py), sample renderer

@@ -8,6 +8,7 @@ from seamjax.gen import *
 SP=load_specs(); E=Game(gen_source(SP)); B=48
 S0=jax.jit(jax.vmap(E.reset))(jax.random.split(jax.random.PRNGKey(3),B), jnp.full(B,8))
 @jax.jit
+@jax.vmap
 def run(s):
     def body(s,_):
         s=s.replace(player=s.player.replace(inv=jnp.float32(1.),hp=jnp.int32(5)))
@@ -16,9 +17,9 @@ def run(s):
     s,(hr,hs)=lax.scan(body,s,None,length=60*90)
     return player_node(s),hr,hs,s.dun.node_dist,s.dun.wall_kind
 ok=tot=walled=0
+PN,HR,HS,ND,WK=[np.array(x) for x in run(S0)]          # all games in one call
 for d in range(B):
-    s=S0[d]
-    pn,hr,hs,nd,wk=[np.array(x) for x in run(s)]; pn=int(pn)
+    pn,hr,hs,nd,wk=int(PN[d]),HR[d],HS[d],ND[d],WK[d]
     node=lambda i: 2*hr[i]+(hs[i] if wk[hr[i]]==1 else 0)
     ns=[node(0)]+[node(i) for i in range(1,len(hr)) if node(i)!=node(i-1)]
     dist=[nd[n,pn] for n in ns]

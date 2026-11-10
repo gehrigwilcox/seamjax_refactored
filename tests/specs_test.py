@@ -2,9 +2,10 @@ import _setup, os, sys
 import numpy as np
 sys.path.insert(0, os.path.join(_setup.ROOT, 'tests', 'reference'))
 """The tiling tables built on the device equal the independent numpy construction, and satisfy the invariants."""
-import specs_numpy
+import specs_numpy, jax
 from seamjax.specs import build_specs
-T, meta = build_specs(); O, _ = specs_numpy.build_specs()
+# built on the CPU: the build is a long sequential float64 loop, ~4 s there and ~2 min on a GTX 1660 (float64 at 1/32 speed); same program
+T, meta = build_specs(jax.devices('cpu')[0]); O, _ = specs_numpy.build_specs()
 for k in O:
     assert O[k].shape == T[k].shape, (k, O[k].shape, T[k].shape)
     assert np.allclose(O[k], T[k], atol=1e-4), k
