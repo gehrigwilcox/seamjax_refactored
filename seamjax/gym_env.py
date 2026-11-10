@@ -1,5 +1,5 @@
 """
-Gymnasium interfaces for Seam. Dungeons are generated on the device by gen.py; nothing comes from files or JS.
+Gymnasium interfaces for Seam. Dungeons are generated on the device by seamjax/gen; nothing comes from files or JS.
 
     import gymnasium as gym, seamjax                 # registers "Seam-v0"
     env = gym.make("Seam-v0")                        # one game (jit-compiled, runs on CPU or GPU)

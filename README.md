@@ -47,7 +47,11 @@ seamjax/            the game (everything needed to play or train)
     ops.py          argsort_small: much faster than jnp.argsort for the tiny per-game arrays
     geometry/       collide.py (circles vs room walls and obstacles), view.py (view rotation / mirror, walking through a door)
   specs.py          catalogue of worlds + a JAX builder that grows each tiling and closes its corner loops -> constant tables
-  gen.py            GPU dungeon generator: rooms, doors, loops, obstacles, inner walls, spawn points, exit
+  gen/              GPU dungeon generator, in stages
+    layout.py       which tiling, which rooms, which doors (spanning tree, loops, seams, corner loops), start / exit, gating
+    room.py         one room: shape.py -> obstacles.py (one style function each) -> walls.py (inner wall) -> placement.py
+                    (exit pad, spawn points, start); grid.py (walkability flood fill) keeps everything reachable
+    dungeon.py      gen_dungeon(SP, key, floor) -> Dungeon
   sim/              the simulation, pure functions of the state
     game.py         Game: reset, next floor / new run, auto-resetting single and batched steps (also used by Gymnasium and the viewer)
     step.py         one frame = the systems in order; returns the new state and what happened (StepEvents)
@@ -133,7 +137,7 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 
 ## Notes
 
-* Dungeons come only from `gen.py`, and the tilings it samples are built on the device by `specs.py`; nothing is exported from another program.
+* Dungeons come only from `gen/`, and the tilings it samples are built on the device by `specs.py`; nothing is exported from another program.
 * Using the simulation directly: `G = seamjax.Game.generated(); s = G.reset(key, floor); s, reward, done, ev = G.step(s, action)`;
   `G.step_auto_batch(S, actions, key)` runs many games and replaces finished ones. A new mechanic is a new system in `sim/systems/`,
   called from `sim/step.py`.

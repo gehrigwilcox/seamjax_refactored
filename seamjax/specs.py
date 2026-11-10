@@ -7,7 +7,7 @@ Wrapped worlds are the flat plane quotiented by a group of isometries (translati
 
 This file holds (1) the CATALOGUE of worlds, which is plain data: a vertex recipe like [4, 6, 12] plus the rule for which
 polygon sits across each side, and (2) a JAX builder that grows each patch, closes the corner loops and flattens everything
-into the constant tables gen.py samples from. The builder is one jitted program (float64 inside, since hyperbolic
+into the constant tables the generator (seamjax/gen) samples from. The builder is one jitted program (float64 inside, since hyperbolic
 poses get large); on first use it takes seconds and the result is cached next to this file.
 
 Poses are 3x3 matrices acting on points (x, y, 1) of the model surface with curvature kappa = +1 / 0 / -1.

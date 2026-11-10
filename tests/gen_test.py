@@ -1,6 +1,7 @@
 import _setup
 import time, numpy as np, jax, jax.numpy as jnp
 from seamjax.gen import *
+from seamjax.core.config import MAX_ROOMS as R, N_SPAWN_POINTS as NSP
 SP=load_specs()
 f=jax.jit(jax.vmap(lambda k,fl: gen_dungeon(SP,k,fl)))
 B=256

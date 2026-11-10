@@ -1,7 +1,7 @@
 """
 A game run: starting a run, the next floor, and steps that carry on by themselves (death -> new run, stairs -> next floor).
 
-    G = Game.generated()                     # dungeons from the GPU generator (gen.py)
+    G = Game.generated()                     # dungeons from the GPU generator (seamjax/gen)
     s = G.reset(key, floor)                  # one game;  G.reset_batch(keys, floors) for many
     s, reward, done, ev = G.step(s, action)  # one frame (pure: seamjax.sim.step.step)
     S, reward, done, info = G.step_auto_batch(S, actions, key)     # many games, finished ones replaced
