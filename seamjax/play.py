@@ -51,7 +51,7 @@ def main(argv=None):
             pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
             pygame.display.set_mode((int(VW), int(VH)), pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE, vsync=1)
             from seamjax.glview import GLView, GLCanvas, Fx
-            gl = GLView(VW, VH, {}); fx = Fx(); cv = GLCanvas(gl)
+            gl = GLView(VW, VH); fx = Fx(); cv = GLCanvas(gl)
         except Exception as ex:
             print('OpenGL view unavailable (%s: %s); using the software renderer. Use --software to silence this.' % (type(ex).__name__, ex))
             gl = None; pygame.display.quit(); pygame.display.init()
@@ -78,8 +78,9 @@ def main(argv=None):
     print('JAX backend: %s%s' % (describe(), ('  (%s)' % info['note']) if info['note'] else ''))
     from seamjax.specs import load_specs
     from seamjax.gen import gen_source
-    from seamjax.env import make_env, CX, CY, GAP, PR, MAXHP, H_R
-    if gl: gl.K.update(CX=CX, CY=CY, GAP=GAP, PR=PR, H_R=H_R, MAXHP=MAXHP)
+    from seamjax.env import make_env
+    from seamjax.core.config import CX, CY, DOOR_GAP as GAP, PLAYER_R as PR, MAX_HP as MAXHP, HUNTER_R as H_R, HUNTER_HP, CHASER_R, SHOOTER_R
+    from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
     from seamjax.events import Events
     events = Events(); audio = None
     if not a.mute:                                                 # generative sound: JAX synthesises it in a background thread
@@ -95,41 +96,41 @@ def main(argv=None):
     def advance(s, act, acc):
         """one 1/60 s step; acc = flags seen since the last snapshot (opened, died, stairs)"""
         s, rew, done = E['step'](s, act)
-        return s, acc | jnp.stack([s['opened'] > 0, done, s['descended']])
+        return s, acc | jnp.stack([s.ev.opened > 0, done, s.ev.descended])
 
     @jax.jit
     def snapshot(s, acc):
-        r = s['room']; d = s['dun']
-        return dict(room=r, floor=d['floor'], spec=d['spec'], exit=d['exit'], kills=s['kills'], hp=s['hp'], x=s['x'], y=s['y'], va=s['va'], mir=s['mir'],
-                    aim=s['aim'], inv=s['inv'], en=s['en'][r], pk=s['pk'][r], pb=s['pb'], eb=s['eb'], hx=s['hx'], hy=s['hy'], hhere=s['hhere'], hroom=s['hroom'],
-                    hsec=s['hsec'], hdead=s['hdead'], hflash=s['hflash'], hhp=s['hhp'], wopen=s['wopen'][r], hdoor=hdoor_f(s), hdist=hdist_f(s), acc=acc,
-                    spawned=s['spawned'][r], n_rooms=d['n_rooms'], start=d['start'], mirv=s['mir'], visited=s['visited'])
+        r = s.room; d = s.dun; P = s.player; H = s.hunter
+        return dict(room=r, floor=d.floor, spec=d.spec, exit=d.exit, kills=s.kills, hp=P.hp, x=P.x, y=P.y, va=s.view_angle, mir=s.mirror,
+                    aim=P.aim, inv=P.inv, en=s.enemies[r], pk=s.pickups[r], pb=s.pb, eb=s.eb, hx=H.x, hy=H.y, hhere=H.here, hroom=H.room,
+                    hsec=H.sec, hdead=H.dead, hflash=H.flash, hhp=H.hp, wopen=s.wall_open[r], hdoor=hdoor_f(s), hdist=hdist_f(s), acc=acc,
+                    spawned=s.spawned[r], n_rooms=d.n_rooms, start=d.start, visited=s.visited)
 
     @jax.jit
     def tables(s):
-        d = s['dun']; r = s['room']
-        return dict(n=d['n'][r], side=d['side'][r], doors=d['doors'][r], obs=d['obs'][r], ot=d['obs_t'][r], wax=d['wax'][r], wkind=d['wkind'][r],
-                    wpos=d['wpos'][r], dsec=d['dsec'][r], pad=d['pad'][r], spawn=d['spawn'][r], spawn_ok=d['spawn_ok'][r], spawn_sec=d['spawn_sec'][r])
+        d = s.dun; r = s.room
+        return dict(room=d.room(r), spawn=d.spawn[r], spawn_ok=d.spawn_ok[r], spawn_sec=d.spawn_sec[r])
 
     @jax.jit
     def layout(s):
-        d = s['dun']; return dict(mpos=d['mpos'], dseam=d['dseam'], doors=d['doors'], n=d['n'], n_rooms=d['n_rooms'], geo=d['geo'], start=d['start'], exit=d['exit'])
+        d = s.dun; return dict(mpos=d.map_pos, dseam=d.door_seam, doors=d.doors, n=d.n, n_rooms=d.n_rooms, geo=d.category, start=d.start, exit=d.exit)
 
     # ---- debug helpers (device side)
     @jax.jit
     def dbg_stairs(s):
-        d = s['dun']; ex = d['exit']; pd = d['pad'][ex]
-        return {**s, 'room': ex, 'x': pd[0], 'y': pd[1], 'spawned': jnp.ones_like(s['spawned']), 'inv': jnp.float32(9.), 'en': s['en'].at[ex, :, 7].set(0.)}
+        d = s.dun; ex = d.exit; pd = d.pad[ex]
+        return s.replace(room=ex, player=s.player.replace(x=pd[0], y=pd[1], inv=jnp.float32(9.)), spawned=jnp.ones_like(s.spawned),
+                         enemies=s.enemies.replace(alive=s.enemies.alive.at[ex].set(False)))
     @jax.jit
-    def dbg_heal(s): return {**s, 'hp': jnp.int32(MAXHP)}
+    def dbg_heal(s): return s.replace(player=s.player.replace(hp=jnp.int32(MAXHP)))
     @jax.jit
-    def dbg_kill(s): return {**s, 'en': s['en'].at[s['room'], :, 7].set(0.)}
+    def dbg_kill(s): return s.replace(enemies=s.enemies.replace(alive=s.enemies.alive.at[s.room].set(False)))
     @jax.jit
-    def dbg_open(s): return {**s, 'wopen': s['wopen'].at[s['room']].set(s['dun']['wkind'][s['room']] == 2), 'spawned': s['spawned'].at[s['room']].set(True)}
+    def dbg_open(s): return s.replace(wall_open=s.wall_open.at[s.room].set(s.dun.wall_kind[s.room] == WALL_GATED), spawned=s.spawned.at[s.room].set(True))
     @jax.jit
-    def dbg_hunter(s): return {**s, 'hdead': jnp.where(s['hdead'] > 1e8, 0., 1e9).astype(jnp.float32)}
+    def dbg_hunter(s): return s.replace(hunter=s.hunter.replace(dead=jnp.where(s.hunter.dead > 1e8, 0., 1e9).astype(jnp.float32)))
     @jax.jit
-    def god(s): return {**s, 'hp': jnp.int32(MAXHP), 'inv': jnp.float32(9.)}
+    def god(s): return s.replace(player=s.player.replace(hp=jnp.int32(MAXHP), inv=jnp.float32(9.)))
     dbg = dict(on=a.debug, god=False, fps=60., ms=[0., 0., 0.], mapmode=1 if a.debug else 0, follow=a.map_follow)      # mapmode: 0 off, 1 whole dungeon, 2 explored only
 
     loading('compiling the world generator and simulation on %s (the first launch takes a while)...' % info['platform'])
@@ -148,12 +149,13 @@ def main(argv=None):
     def room_tables(sn):
         sig = (gen_id[0], int(sn['room']))
         if cache['sig'] != sig:
-            T = jax.device_get(tables(s)); n = int(T['n']); side = np.asarray(T['side'])[:n]; V = []
+            T = jax.device_get(tables(s)); rm = T['room']; n = int(rm.n); side = rm.sides[:n]; V = []
             for k in range(n):                                                    # polygon corners: intersect neighbouring side lines
-                p, q = side[k], side[(k+1) % n]; Mx = np.array([[p[2], p[3]], [q[2], q[3]]]); bb = np.array([p[2]*p[0]+p[3]*p[1], q[2]*q[0]+q[3]*q[1]])
-                V.append(np.linalg.solve(Mx, bb) if abs(np.linalg.det(Mx)) > 1e-9 else side[k][:2])
-            cache.update(sig=sig, n=n, side=side, doors=np.asarray(T['doors'])[:n], V=np.array(V), obs=np.asarray(T['obs']), ot=np.asarray(T['ot']),
-                         wax=int(T['wax']), wkind=int(T['wkind']), wpos=float(T['wpos']), dsec=np.asarray(T['dsec'])[:n], pad=np.asarray(T['pad']),
+                (p0, p1), (q0, q1) = side.normal[k], side.normal[(k+1) % n]; Mx = np.array([[p0, p1], [q0, q1]])
+                bb = np.array([side.normal[k] @ side.mid[k], side.normal[(k+1) % n] @ side.mid[(k+1) % n]])
+                V.append(np.linalg.solve(Mx, bb) if abs(np.linalg.det(Mx)) > 1e-9 else side.mid[k])
+            cache.update(sig=sig, n=n, side=side, doors=np.asarray(rm.doors)[:n], V=np.array(V), ob=rm.obstacles,
+                         wax=int(rm.wall_axis), wkind=int(rm.wall_kind), wpos=float(rm.wall_pos), dsec=np.asarray(rm.door_sec)[:n], pad=np.asarray(rm.pad),
                          spawn=np.asarray(T['spawn']), spawn_ok=np.asarray(T['spawn_ok']), spawn_sec=np.asarray(T['spawn_sec']), hue=(sig[1]*137.508) % 360)
         return cache
     def hsl(h, sat, l):
@@ -213,10 +215,10 @@ def main(argv=None):
             w = c['wpos']; a0, a1 = ((0, w), (VW, w)) if wax == 1 else ((w, 0), (w, VH)); cv.line(M(*a0), M(*a1), (255, 255, 255), 1)
         for k in range(n):                                                                    # door labels: where it leads, and which side of a wall
             if c['doors'][k] >= 0:
-                S = c['side'][k]; x, y = M(S[6]-S[2]*26, S[7]-S[3]*26)
+                (dx, dy), (nx, ny) = c['side'].door[k], c['side'].normal[k]; x, y = M(dx-nx*26, dy-ny*26)
                 cv.text('->%d%s' % (c['doors'][k], ('  side %d' % c['dsec'][k]) if c['wkind'] else ''), x, y-8, SMALL, (255, 240, 160), 'c')
         sec = 0 if not wax else int((float(sn['y']) if wax == 1 else float(sn['x'])) >= c['wpos'])
-        sp = meta[int(sn['spec'])]; alive = int((np.asarray(sn['en'])[:, 7] > .5).sum())
+        sp = meta[int(sn['spec'])]; alive = int(np.asarray(sn['en'].alive).sum())
         lines = ['DEBUG (F1 hides)  N stairs  H heal  G god %s  K kill all  O open gate  T hunter  M map  C map follows you  B info' % ('ON' if dbg['god'] else 'off'),
                  'world %s [%s]  corner turn %.0f deg  rooms %d' % (sp['name'], sp['cat'], sp['hol'], int(sn['n_rooms'])),
                  '      '+explain_world(sp['name'], sp['cat']),
@@ -237,49 +239,48 @@ def main(argv=None):
         pygame.mask.from_surface(pm).to_surface(screen, setsurface=layer, unsetcolor=None)        # grid only inside the room
         wopen = bool(sn['wopen']); hd = int(sn['hdoor']); wallcol = hsl(c['hue'], .55, .58)
         for k in range(n):
-            S = c['side'][k]; A, B = c['V'][(k-1) % n], c['V'][k]
+            A, B = c['V'][(k-1) % n], c['V'][k]
             if c['doors'][k] >= 0:
-                tx, ty = S[4], S[5]; g0 = np.array([S[6]-tx*GAP, S[7]-ty*GAP]); g1 = np.array([S[6]+tx*GAP, S[7]+ty*GAP])
+                tg, dr = c['side'].tangent[k], c['side'].door[k]; g0 = dr-tg*GAP; g1 = dr+tg*GAP
                 near = A if np.dot(A-g0, A-g0) < np.dot(B-g0, B-g0) else B; far = B if near is A else A
                 pygame.draw.line(screen, wallcol, M(*near), M(*g0), 4); pygame.draw.line(screen, wallcol, M(*g1), M(*far), 4)
                 col = (255, 60, 90) if k == hd else (255, 190, 110) if (c['wkind'] > 0 and c['dsec'][k] > 0) else (150, 235, 255)
                 pygame.draw.line(screen, col, M(*g0), M(*g1), 8 if k == hd else 5)
             else: pygame.draw.line(screen, wallcol, M(*A), M(*B), 4)
-        for o, ty in zip(c['obs'], c['ot']):
-            if ty < 0: continue
-            if o[4] > 0:                                                              # inner wall
+        ob = c['ob']
+        for ty, (ox, oy), (w, h), wall in zip(ob.kind, ob.pos, ob.size, ob.wall):
+            if ty == OBST_NONE: continue
+            if wall:                                                                  # inner wall
                 if wopen: continue
-                col = (90, 150, 255) if c['wkind'] == 2 else (255, 100, 158)
+                col = (90, 150, 255) if c['wkind'] == WALL_GATED else (255, 100, 158)
             else: col = hsl(c['hue'], .35, .26)
-            if ty == 0: pygame.draw.circle(screen, col, M(o[0], o[1]), int(o[2]))
-            else: pygame.draw.polygon(screen, col, [M(o[0], o[1]), M(o[0]+o[2], o[1]), M(o[0]+o[2], o[1]+o[3]), M(o[0], o[1]+o[3])])
-        en = np.asarray(sn['en']); alive = en[:, 7] > .5
+            if ty == OBST_CIRCLE: pygame.draw.circle(screen, col, M(ox, oy), int(w))
+            else: pygame.draw.polygon(screen, col, [M(ox, oy), M(ox+w, oy), M(ox+w, oy+h), M(ox, oy+h)])
+        en = sn['en']; alive = np.asarray(en.alive)
         if r == int(sn['exit']):
             px, py = M(*c['pad']); pygame.draw.circle(screen, (140, 255, 215) if not alive.any() else (130, 130, 130), (int(px), int(py)), 18, 3)
-        for p in np.asarray(sn['pk']):
-            if p[2] > .5:
-                x, y = M(p[0], p[1]); pygame.draw.circle(screen, (255, 92, 115), (int(x-3), int(y)), 5); pygame.draw.circle(screen, (255, 92, 115), (int(x+3), int(y)), 5)
-                pygame.draw.polygon(screen, (255, 92, 115), [(x-8, y+1), (x+8, y+1), (x, y+11)])
-        for e in en[alive]:
-            x, y = M(e[0], e[1]); rad = 14 if e[3] > .5 else 12
-            if e[5] > 0: pygame.draw.circle(screen, (255, 255, 255), (int(x), int(y)), int(rad+4*e[5]), 1)
-            else: pygame.draw.circle(screen, (255, 255, 255) if e[6] > 0 else ((180, 126, 255) if e[3] > .5 else (255, 122, 69)), (int(x), int(y)), rad)
-        for b in np.asarray(sn['pb']):
-            if b[5] > .5: pygame.draw.circle(screen, (255, 226, 122), tuple(map(int, M(b[0], b[1]))), 4)
-        for b in np.asarray(sn['eb']):
-            if b[5] > .5: pygame.draw.circle(screen, (255, 138, 210), tuple(map(int, M(b[0], b[1]))), 5)
+        pk = sn['pk']
+        for i in np.where(pk.alive)[0]:
+            x, y = M(pk.x[i], pk.y[i]); pygame.draw.circle(screen, (255, 92, 115), (int(x-3), int(y)), 5); pygame.draw.circle(screen, (255, 92, 115), (int(x+3), int(y)), 5)
+            pygame.draw.polygon(screen, (255, 92, 115), [(x-8, y+1), (x+8, y+1), (x, y+11)])
+        for i in np.where(alive)[0]:
+            x, y = M(en.x[i], en.y[i]); sh = bool(en.shooter[i]); rad = int(SHOOTER_R if sh else CHASER_R); tg = float(en.telegraph[i])
+            if tg > 0: pygame.draw.circle(screen, (255, 255, 255), (int(x), int(y)), int(rad+4*tg), 1)
+            else: pygame.draw.circle(screen, (255, 255, 255) if en.flash[i] > 0 else ((180, 126, 255) if sh else (255, 122, 69)), (int(x), int(y)), rad)
+        for bl, col, rad in ((sn['pb'], (255, 226, 122), 4), (sn['eb'], (255, 138, 210), 5)):
+            for i in np.where(bl.alive)[0]: pygame.draw.circle(screen, col, tuple(map(int, M(bl.x[i], bl.y[i]))), rad)
         if bool(sn['hhere']) and int(sn['hroom']) == r and float(sn['hdead']) <= 0:
             x, y = M(float(sn['hx']), float(sn['hy']))
             pts = [(x+H_R*1.2*math.sin(2*math.pi*i/5), y-H_R*1.2*math.cos(2*math.pi*i/5)) for i in range(5)]
             pygame.draw.polygon(screen, (255, 255, 255) if float(sn['hflash']) > 0 else (163, 18, 43), pts); pygame.draw.polygon(screen, (255, 93, 115), pts, 3)
         px, py = M(float(sn['x']), float(sn['y']))
-        if not (float(sn['inv']) > 0 and int(t*20) % 2): pygame.draw.circle(screen, (232, 245, 255), (int(px), int(py)), PR)
+        if not (float(sn['inv']) > 0 and int(t*20) % 2): pygame.draw.circle(screen, (232, 245, 255), (int(px), int(py)), int(PR))
         ang = float(sn['aim']); ax, ay = view(va, mir, math.cos(ang), math.sin(ang)); pygame.draw.line(screen, (255, 226, 122), (px, py), (px+ax*20, py+ay*20), 3)
 
     def draw_hud(sn, t, dead, c, M):
         r = int(sn['room'])
         if bool(sn['hhere']) and int(sn['hroom']) == r and float(sn['hdead']) <= 0:                  # Hunter health bar
-            x, y = M(float(sn['hx']), float(sn['hy'])); cv.rect(x-18, y-34, 36, 4, (60, 10, 20)); cv.rect(x-18, y-34, 36*float(sn['hhp'])/18., 4, (255, 93, 115))
+            x, y = M(float(sn['hx']), float(sn['hy'])); cv.rect(x-18, y-34, 36, 4, (60, 10, 20)); cv.rect(x-18, y-34, 36*float(sn['hhp'])/HUNTER_HP, 4, (255, 93, 115))
         for i in range(MAXHP):
             cv.rect(12+i*22, 10, 16, 16, (255, 92, 115) if i < int(sn['hp']) else (60, 40, 46), 4)
         cv.text('Floor %d   kills %d   %s' % (int(sn['floor']), int(sn['kills']), 'in a wall-split room' if c['wax'] else ''), 12, 34, FONT, (180, 215, 210))
@@ -318,10 +319,10 @@ def main(argv=None):
         return np.concatenate([mv, aim]).astype(np.float32)
 
     def bot(sn):                                                     # stand off, shoot the nearest enemy; just a demo
-        en = np.asarray(sn['en']); al = en[:, 7] > .5
+        en = sn['en']; al = np.asarray(en.alive)
         if not al.any(): return np.zeros(4, np.float32)
-        d = np.hypot(en[:, 0]-float(sn['x']), en[:, 1]-float(sn['y'])); d[~al] = 1e9; j = int(d.argmin())
-        v = np.array(view(float(sn['va']), float(sn['mir']), en[j, 0]-float(sn['x']), en[j, 1]-float(sn['y']))); v /= np.hypot(*v)+1e-9
+        d = np.hypot(en.x-float(sn['x']), en.y-float(sn['y'])); d[~al] = 1e9; j = int(d.argmin())
+        v = np.array(view(float(sn['va']), float(sn['mir']), en.x[j]-float(sn['x']), en.y[j]-float(sn['y']))); v /= np.hypot(*v)+1e-9
         return np.array([-v[0]*(d[j] < 160)+v[1]*.6, -v[1]*(d[j] < 160)-v[0]*.6, v[0], v[1]], np.float32)
 
     zero = jnp.zeros(3, bool); acc = zero; sn = jax.device_get(snapshot(s, acc)); dead = False

@@ -16,6 +16,8 @@ All shader coordinates are the game's logical pixels (960 x 600, y down), alread
 import math, colorsys
 import numpy as np
 import moderngl
+from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R, CHASER_R, SHOOTER_R
+from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
 
 NSEG, NSPR, NPART = 40, 1024, 2048
 Q = np.array([-1, -1, 1, -1, -1, 1, 1, 1], 'f4')          # unit quad (triangle strip)
@@ -200,8 +202,8 @@ class Fx:
 
 
 class GLView:
-    def __init__(self, VW, VH, K):
-        self.VW, self.VH, self.K = VW, VH, K                       # K: dict of game constants (CX, CY, GAP, PR, H_R, MAXHP)
+    def __init__(self, VW, VH):
+        self.VW, self.VH = VW, VH
         ctx = self.ctx = moderngl.create_context()
         if ctx.version_code < 330: raise RuntimeError('OpenGL 3.3 needed, got %d' % ctx.version_code)
         mk = lambda vs, fs: ctx.program(vertex_shader=vs, fragment_shader=fs)
@@ -239,11 +241,12 @@ class GLView:
         if name in prog: prog[name].write(np.ascontiguousarray(a, 'f4').tobytes())
 
     def _geometry(self, sn, c, M, t):
-        n = c['n']; V = np.array([M(*v) for v in c['V']]); K = self.K; hue = c['hue']; hd = int(sn['hdoor']); wallc = rgb(hue, .55, .58); segs = []
+        n = c['n']; V = np.array([M(*v) for v in c['V']]); hue = c['hue']; hd = int(sn['hdoor']); wallc = rgb(hue, .55, .58); segs = []
         for k in range(n):
-            S = c['side'][k]; A, B = V[(k-1) % n], V[k]
+            A, B = V[(k-1) % n], V[k]
             if c['doors'][k] >= 0:
-                tx, ty = S[4], S[5]; g0 = np.array(M(S[6]-tx*K['GAP'], S[7]-ty*K['GAP'])); g1 = np.array(M(S[6]+tx*K['GAP'], S[7]+ty*K['GAP']))
+                (tx, ty), (dx, dy) = c['side'].tangent[k], c['side'].door[k]
+                g0 = np.array(M(dx-tx*DOOR_GAP, dy-ty*DOOR_GAP)); g1 = np.array(M(dx+tx*DOOR_GAP, dy+ty*DOOR_GAP))
                 near, far = (A, B) if np.dot(A-g0, A-g0) < np.dot(B-g0, B-g0) else (B, A)
                 col = np.array([1., .24, .35])*(.55+.45*math.sin(t*8)) if k == hd else np.array([1., .745, .43]) if (c['wkind'] > 0 and c['dsec'][k] > 0) else np.array([.59, .92, 1.])
                 segs += [(near, g0, wallc, 4.), (g1, far, wallc, 4.), (g0, g1, col, 8. if k == hd else 5.)]
@@ -256,42 +259,39 @@ class GLView:
 
     def _obstacles(self, sn, c, M, va, mir):
         A = np.zeros((6, 4), 'f4'); B = np.zeros((6, 4), 'f4'); C = np.zeros((6, 4), 'f4'); m = 0; wopen = bool(sn['wopen']); cs, sn_ = math.cos(va), math.sin(va)
-        for o, ty in zip(c['obs'], c['ot']):
-            if ty < 0 or m >= 6: continue
-            wall = o[4] > 0
+        ob = c['ob']
+        for ty, (px, py), (w, h), wall in zip(ob.kind, ob.pos, ob.size, ob.wall):
+            if ty == OBST_NONE or m >= 6: continue
             if wall and wopen: continue
-            col = (np.array([.35, .59, 1.]) if c['wkind'] == 2 else np.array([1., .39, .62])) if wall else rgb(c['hue'], .35, .26)
-            if ty == 0: ctr = M(o[0], o[1]); A[m] = [*ctr, o[2], 0]; B[m] = [0, 1, 0, 0]
-            else: ctr = M(o[0]+o[2]/2, o[1]+o[3]/2); A[m] = [*ctr, o[2]/2, o[3]/2]; B[m] = [1, cs, sn_, 0]
+            col = (np.array([.35, .59, 1.]) if c['wkind'] == WALL_GATED else np.array([1., .39, .62])) if wall else rgb(c['hue'], .35, .26)
+            if ty == OBST_CIRCLE: ctr = M(px, py); A[m] = [*ctr, w, 0]; B[m] = [0, 1, 0, 0]
+            else: ctr = M(px+w/2, py+h/2); A[m] = [*ctr, w/2, h/2]; B[m] = [1, cs, sn_, 0]
             C[m] = [*col, 1. if wall else 0.]; m += 1
         return m, A, B, C
 
     def _sprites(self, sn, c, M, va, mir, t):
-        K = self.K; rows = []; r = int(sn['room'])
+        rows = []; r = int(sn['room'])
         def add(p, rad, kind, col, inten=1., ext=None, ang=0., ln=0.):
             rows.append([p[0], p[1], rad, ext if ext is not None else rad*3.2+8, kind, col[0], col[1], col[2], inten, ang, ln])
-        en = np.asarray(sn['en']); alive = en[:, 7] > .5
+        en = sn['en']; alive = np.asarray(en.alive)
         if r == int(sn['exit']):
             open_ = not alive.any(); pc = M(*c['pad']); pulse = .8+.2*math.sin(t*4)
             add(pc, 18, 1, (.55, 1., .84) if open_ else (.5, .5, .5), pulse if open_ else .6, 34, 0, 3.)
             if open_: add(pc, 8, 0, (.55, 1., .84), .35*pulse, 40)
-        for i, p in enumerate(np.asarray(sn['pk'])):
-            if p[2] > .5: add(M(p[0], p[1]), 11*(1+.08*math.sin(t*4+i)), 3, (1., .36, .45), 1.1, 40)
-        for e in en[alive]:
-            p = M(e[0], e[1]); rad = 14 if e[3] > .5 else 12
-            if e[5] > 0: add(p, rad+4*e[5], 1, (1., 1., 1.), .8, rad*3+10, 0, 1.6)
-            else: add(p, rad, 0, (1., 1., 1.) if e[6] > 0 else ((.71, .49, 1.) if e[3] > .5 else (1., .48, .27)), 1.)
-        for b in np.asarray(sn['pb']):
-            if b[5] > .5:
-                vx, vy = Fx._v(sn, b[2], b[3]); add(M(b[0], b[1]), 3, 4, (1., .89, .48), 1.5, 40, math.atan2(-vy, -vx), 16.)
-        for b in np.asarray(sn['eb']):
-            if b[5] > .5:
-                vx, vy = Fx._v(sn, b[2], b[3]); add(M(b[0], b[1]), 4.5, 4, (1., .54, .82), 1.4, 36, math.atan2(-vy, -vx), 10.)
+        pk = sn['pk']
+        for i in np.where(pk.alive)[0]: add(M(pk.x[i], pk.y[i]), 11*(1+.08*math.sin(t*4+i)), 3, (1., .36, .45), 1.1, 40)
+        for i in np.where(alive)[0]:
+            p = M(en.x[i], en.y[i]); sh = bool(en.shooter[i]); rad = SHOOTER_R if sh else CHASER_R; tg = float(en.telegraph[i])
+            if tg > 0: add(p, rad+4*tg, 1, (1., 1., 1.), .8, rad*3+10, 0, 1.6)
+            else: add(p, rad, 0, (1., 1., 1.) if en.flash[i] > 0 else ((.71, .49, 1.) if sh else (1., .48, .27)), 1.)
+        for bl, rad, col, inten, ext, ln in ((sn['pb'], 3, (1., .89, .48), 1.5, 40, 16.), (sn['eb'], 4.5, (1., .54, .82), 1.4, 36, 10.)):
+            for i in np.where(bl.alive)[0]:
+                vx, vy = Fx._v(sn, bl.vx[i], bl.vy[i]); add(M(bl.x[i], bl.y[i]), rad, 4, col, inten, ext, math.atan2(-vy, -vx), ln)
         if bool(sn['hhere']) and r == int(sn['hroom']) and float(sn['hdead']) <= 0:
-            add(M(float(sn['hx']), float(sn['hy'])), K['H_R']*1.2, 2, (1., 1., 1.) if float(sn['hflash']) > 0 else (1., .36, .45), 1.1, K['H_R']*4, t*.8)
+            add(M(float(sn['hx']), float(sn['hy'])), HUNTER_R*1.2, 2, (1., 1., 1.) if float(sn['hflash']) > 0 else (1., .36, .45), 1.1, HUNTER_R*4, t*.8)
         px = M(float(sn['x']), float(sn['y']))
         if not (float(sn['inv']) > 0 and int(t*20) % 2):
-            add(px, K['PR'], 0, (.8, .9, 1.), .85, 44)
+            add(px, PLAYER_R, 0, (.8, .9, 1.), .85, 44)
         ang = float(sn['aim']); ax, ay = Fx._v(sn, math.cos(ang), math.sin(ang)); add(px, 1.6, 4, (1., .89, .48), 1.2, 40, math.atan2(ay, ax), 20.)
         return np.array(rows[:NSPR], 'f4').reshape(-1, 11), px
 
@@ -299,11 +299,11 @@ class GLView:
     def scene(self, sn, c, M, va, mir, t, style, fx, now):
         import pygame
         ctx = self.ctx; self.resize(pygame.display.get_window_size())
-        RW, RH = self.size; res = (self.VW, self.VH); K = self.K
+        RW, RH = self.size; res = (self.VW, self.VH)
         n, vt, wind, ns, sa, sc = self._geometry(sn, c, M, t); no, oA, oB, oC = self._obstacles(sn, c, M, va, mir); spr, ppos = self._sprites(sn, c, M, va, mir, t)
         self.f_scene.use(); ctx.viewport = (0, 0, RW, RH); ctx.disable(moderngl.BLEND)
         P = self.p_scene
-        self._set(P, u_res=res, u_ctr=(K['CX'], K['CY']), u_player=tuple(ppos), u_time=float(t), u_hue=float(c['hue']), u_va=float(va), u_mir=float(mir), u_style=int(style), u_nv=int(n), u_wind=float(wind), u_ns=int(ns), u_no=int(no))
+        self._set(P, u_res=res, u_ctr=(CX, CY), u_player=tuple(ppos), u_time=float(t), u_hue=float(c['hue']), u_va=float(va), u_mir=float(mir), u_style=int(style), u_nv=int(n), u_wind=float(wind), u_ns=int(ns), u_no=int(no))
         for nm, arr in (('u_vtx', vt), ('u_segA', sa), ('u_segC', sc), ('u_obsA', oA), ('u_obsB', oB), ('u_obsC', oC)): self._arr(P, nm, arr)
         self.quad_vao[P].render(moderngl.TRIANGLE_STRIP)
         ctx.enable(moderngl.BLEND); ctx.blend_func = moderngl.ONE, moderngl.ONE

@@ -10,25 +10,34 @@ try:
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
     pygame.display.set_mode((960, 600), pygame.OPENGL | pygame.DOUBLEBUF)
     from seamjax.glview import GLView, GLCanvas, Fx
-    gl = GLView(960., 600., dict(CX=480., CY=300., GAP=34., PR=11., H_R=19., MAXHP=5))
+    gl = GLView(960., 600.)
 except Exception as ex:
     print('SKIP (no OpenGL 3.3 here: %s)' % ex); sys.exit(0)
 n = 6; R = 230.; V = np.array([[480+R*math.sin(2*math.pi*i/n), 300-R*math.cos(2*math.pi*i/n)] for i in range(n)])
-side = np.zeros((12, 8))
+from seamjax.core.types import Sides, Obstacles, Enemies, Pickups, Bullets
+mid, nrm, tan = np.zeros((n, 2)), np.zeros((n, 2)), np.zeros((n, 2))
 for k in range(n):
-    A, B = V[(k-1) % n], V[k]; m = (A+B)/2; tv = (B-A)/np.linalg.norm(B-A); nv = np.array([tv[1], -tv[0]])
-    side[k] = [m[0], m[1], nv[0], nv[1], tv[0], tv[1], m[0], m[1]]
+    A, B = V[(k-1) % n], V[k]; mid[k] = (A+B)/2; tan[k] = (B-A)/np.linalg.norm(B-A); nrm[k] = [tan[k, 1], -tan[k, 0]]
 doors = np.full(n, -1); doors[0] = 3; doors[3] = 5
-obs = np.zeros((6, 5)); ot = np.full(6, -1); obs[0] = [380, 330, 70, 40, 0]; ot[0] = 1; obs[1] = [600, 250, 24, 0, 0]; ot[1] = 0
-c = dict(n=n, V=V, side=side[:n], doors=doors, obs=obs, ot=ot, wax=0, wkind=0, wpos=0., dsec=np.zeros(n, int), pad=np.array([480., 300.]), hue=200.)
-en = np.zeros((10, 8)); en[0] = [350, 250, 0, 1, 0, 0, 0, 1]; en[1] = [560, 330, 0, 0, 0, 0, 0, 1]; en[2] = [450, 200, 0, 0, 0, .6, 0, 1]; en[3] = [520, 400, 0, 0, 0, 0, 1, 1]
-pk = np.zeros((6, 3)); pk[0] = [400, 380, 1]; pb = np.zeros((24, 6)); pb[0] = [430, 290, 380, 20, 1, 1]; eb = np.zeros((24, 6)); eb[0] = [380, 270, 100, 60, 3, 1]
+ob = Obstacles(kind=np.array([1, 0, -1, -1, -1, -1]), pos=np.array([[380, 330], [600, 250]]+[[0, 0]]*4, float),
+               size=np.array([[70, 40], [24, 0]]+[[0, 0]]*4, float), wall=np.zeros(6, bool))
+c = dict(n=n, V=V, side=Sides(mid=mid, normal=nrm, tangent=tan, door=mid.copy()), doors=doors, ob=ob, wax=0, wkind=0, wpos=0., dsec=np.zeros(n, int),
+         pad=np.array([480., 300.]), hue=200.)
+def pool(cls, n, rows):
+    cols = {f: np.zeros(n, bool if f in ('alive', 'shooter') else float) for f in cls.fields()}
+    for i, row in enumerate(rows):
+        for f, v in row.items(): cols[f][i] = v
+    return cls(**cols)
+en = pool(Enemies, 10, [dict(x=350, y=250, shooter=True, alive=True), dict(x=560, y=330, alive=True), dict(x=450, y=200, telegraph=.6, alive=True),
+                        dict(x=520, y=400, flash=1, alive=True)])
+pk = pool(Pickups, 6, [dict(x=400, y=380, alive=True)])
+pb = pool(Bullets, 24, [dict(x=430, y=290, vx=380, vy=20, life=1, alive=True)]); eb = pool(Bullets, 24, [dict(x=380, y=270, vx=100, vy=60, life=3, alive=True)])
 sn = dict(room=0, exit=0, hp=5, x=470., y=310., va=0., mir=1., aim=.3, inv=0., en=en, pk=pk, pb=pb, eb=eb, hx=300., hy=330., hhere=True, hroom=0, hdead=0., hflash=0., hhp=12.,
           wopen=False, hdoor=3, spec=0)
 M = lambda x, y: (x, y); fx = Fx(); gl.resize((960, 600))
 from seamjax.events import Events
-ev = Events(); sn['pb'] = pb.copy(); sn['hdead'] = 0.; ev.update(sn, (0, 0), 0, False)
-sn2 = dict(sn, en=en.copy(), hp=4); sn2['en'][0, 7] = 0; fx.apply(ev.update(sn2, (0, 0), 0, False), M, .1)        # an enemy dies and the player is hit
+ev = Events(); ev.update(sn, (0, 0), 0, False)
+sn2 = dict(sn, en=en.replace(alive=np.where(np.arange(10) == 0, False, en.alive)), hp=4); fx.apply(ev.update(sn2, (0, 0), 0, False), M, .1)        # an enemy dies and the player is hit
 assert (fx.part[:, 5] > 0).sum() > 20 and fx.hit > .5 and fx.shake > .5, 'events did not make effects'
 bright = {}
 for style in range(4):

@@ -39,6 +39,7 @@ See `DESIGN.md` for the design document (vision, requirements, difficulty curve)
 
 ```
 seamjax/            the game (everything needed to play or train)
+  core/             the data of the game: typed state (types.py), every constant (config.py), pytree dataclass helpers (struct.py)
   specs.py          catalogue of worlds + a JAX builder that grows each tiling and closes its corner loops -> constant tables
   gen.py            GPU dungeon generator: rooms, doors, loops, obstacles, inner walls, spawn points, exit
   env.py            the simulation: movement, combat, Hunter, pickups, sections, view/mirror, observation
@@ -51,6 +52,7 @@ seamjax/            the game (everything needed to play or train)
   audio.py          generative sound, synthesised by JAX
   glview.py         OpenGL view: floor textures, glow, particles, bloom, screen shake, all on the GPU
 tests/              every test; `python tests/run_all.py`
+  golden_test.py    refactor safety net: generator + simulation must reproduce tests/golden/trace.npz exactly (CPU)
   reference/        optional: check the JAX sim against the original JS game (needs playwright + that game)
 tools/              benchmark, sample renderer
 ```
@@ -121,6 +123,10 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 ## Notes
 
 * Dungeons come only from `gen.py`, and the tilings it samples are built on the device by `specs.py`; nothing is exported from another program.
+* The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
+  Change fields with `s.replace(...)`; index a whole pool or batch with `s.enemies[room]` / `S[i]`.
+* `tests/golden_test.py` records what the generator and the simulation produce and checks later code reproduces it bit for bit;
+  re-record (`--record`) only when a change of behaviour is intended. `tests/golden/canon.py` is the only test code that knows the state layout.
 * `tests/specs_test.py` checks the device-built tables against an independent numpy construction (`tests/reference/specs_numpy.py`).
 * `tests/reference/` records dungeons and scripted walks from the original JS game to check frame-for-frame agreement
   (`python tests/reference/export_pool.py path/to/index.html`, then `python tests/reference/parity.py`). Not needed to play or train.

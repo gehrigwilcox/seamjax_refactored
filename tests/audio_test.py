@@ -14,11 +14,16 @@ for n, v in L.items():
     step = np.abs(np.diff(v)).max(); seam = abs(v[0]-v[-1]); assert seam <= 3*step+1e-3, (n, 'seam', seam, step)
     print('%-14s loop %.1f s  seam %.4f (largest normal step %.4f)' % (n, len(v)/audio.SR, seam, step))
 # events
-ev = Events(); z = lambda n, v=0.: np.full(n, v)
+from seamjax.core.types import Enemies, Bullets
+ev = Events()
+def pool(cls, n, **set0):
+    cols = {f: np.zeros(n, bool if f in ('alive', 'shooter') else float) for f in cls.fields()}
+    for f, v in set0.items(): cols[f][0] = v
+    return cls(**cols)
 def sn(**kw):
-    en = np.zeros((10, 8)); en[0] = [100, 100, 0, 1, 0, 0, 0, 1]
-    d = dict(en=en, hp=5, pb=np.zeros((24, 6)), hhp=18., hdead=0., x=10., y=20., hx=0., hy=0., hhere=False, aim=0.); d.update(kw); return d
+    d = dict(en=pool(Enemies, 10, x=100, y=100, shooter=True, alive=True), hp=5, pb=pool(Bullets, 24), hhp=18., hdead=0., x=10., y=20., hx=0., hy=0., hhere=False, aim=0.)
+    d.update(kw); return d
 assert ev.update(sn(), (0, 0), 0, False) == []
-e2 = np.zeros((10, 8)); k = ev.update(sn(en=e2, hp=4), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['shooter'], k
+e2 = pool(Enemies, 10); k = ev.update(sn(en=e2, hp=4), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['shooter'], k
 assert [e['name'] for e in ev.update(sn(en=e2, hp=4), (1, 5), 1, False)] == ['descend']
 print('events PASS\naudio PASS')

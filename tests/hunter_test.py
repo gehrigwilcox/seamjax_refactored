@@ -8,15 +8,14 @@ S0=jax.jit(jax.vmap(E['reset']))(jax.random.split(jax.random.PRNGKey(3),B), jnp.
 @jax.jit
 def run(s):
     def body(s,_):
-        s={**s,'inv':1.,'hp':jnp.int32(5)}
+        s=s.replace(player=s.player.replace(inv=jnp.float32(1.),hp=jnp.int32(5)))
         s,_,_=E['step'](s,jnp.zeros(4))
-        return s,(s['hroom'],s['hsec'])
+        return s,(s.hunter.room,s.hunter.sec)
     s,(hr,hs)=lax.scan(body,s,None,length=60*90)
-    pn=hnode(s['dun'],s['room'],sec_point(s['dun'],s['room'],s['x'],s['y']))
-    return pn,hr,hs,s['dun']['ndist'],s['dun']['wkind']
+    return player_node(s),hr,hs,s.dun.node_dist,s.dun.wall_kind
 ok=tot=walled=0
 for d in range(B):
-    s=jax.tree_util.tree_map(lambda a:a[d],S0)
+    s=S0[d]
     pn,hr,hs,nd,wk=[np.array(x) for x in run(s)]; pn=int(pn)
     node=lambda i: 2*hr[i]+(hs[i] if wk[hr[i]]==1 else 0)
     ns=[node(0)]+[node(i) for i in range(1,len(hr)) if node(i)!=node(i-1)]

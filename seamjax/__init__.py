@@ -5,6 +5,7 @@ from seamjax import backend; backend.apply_env()                   # choose CUDA
 from seamjax.specs import load_specs
 from seamjax.gen import gen_dungeon, gen_source
 from seamjax.env import make_env
+from seamjax.core.types import GameState, Dungeon
 from seamjax.difficulty import difficulty, FLOOR_CAP
 try:                                   # registers Seam-v0 / SeamVec-v0 when gymnasium is installed
     from seamjax.gym_env import SeamEnv, SeamVectorEnv

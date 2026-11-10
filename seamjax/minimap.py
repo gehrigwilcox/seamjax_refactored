@@ -55,7 +55,7 @@ def orient(L, P, r, c, va, mir, view):
     for k in range(c['n']):
         j = c['doors'][k]
         if j >= 0 and j < L['m'] and L['dseam'][r, k] == 0 and np.hypot(*(P[j]-P[r])) > 1e-9:
-            S = c['side'][k]; ds.append(complex(*view(va, mir, S[2], S[3]))); ms.append(complex(*(P[j]-P[r])))
+            ds.append(complex(*view(va, mir, *c['side'].normal[k]))); ms.append(complex(*(P[j]-P[r])))
     if not ds: return 0., L['flip']
     ds = np.array(ds)/np.abs(ds); ms = np.array(ms)/np.abs(ms); fits = []
     for flip in (False, True):

@@ -25,52 +25,54 @@ def api():
 
 
 def canon_dungeon(d):
-    """dungeon tables -> canonical dict (obstacles split into named parts, sides into named columns)"""
-    side = d['side']; obs = d['obs']; ot = d['obs_t']
-    return dict(n_rooms=d['n_rooms'], n=d['n'], doors=d['doors'], arr=d['arr'], flip=d['flip'],
-                side_mid=side[..., 0:2], side_normal=side[..., 2:4], side_tangent=side[..., 4:6], side_door=side[..., 6:8],
-                obs_kind=ot, obs_pos=obs[..., 0:2], obs_size=obs[..., 2:4], obs_is_wall=obs[..., 4] > 0,
-                pad=d['pad'], rb=d['rb'], rin=d['rin'], start=d['start'], startpos=d['startpos'], exit=d['exit'], floor=d['floor'],
-                geo=d['geo'], depth=d['depth'], dist=d['dist'], wax=d['wax'], wpos=d['wpos'], wkind=d['wkind'], dsec=d['dsec'],
-                spawn_sec=d['spawn_sec'], ndist=d['ndist'], spawn=d['spawn'], spawn_ok=d['spawn_ok'], area=d['area'], spec=d['spec'],
-                hol=d['hol'], mpos=d['mpos'], dseam=d['dseam'])
+    """dungeon tables -> canonical dict"""
+    sd, ob = d.sides, d.obstacles
+    return dict(n_rooms=d.n_rooms, n=d.n, doors=d.doors, arr=d.arrive, flip=d.flip,
+                side_mid=sd.mid, side_normal=sd.normal, side_tangent=sd.tangent, side_door=sd.door,
+                obs_kind=ob.kind, obs_pos=ob.pos, obs_size=ob.size, obs_is_wall=ob.wall,
+                pad=d.pad, rb=d.radius, rin=d.inradius, start=d.start, startpos=d.startpos, exit=d.exit, floor=d.floor,
+                geo=d.category, depth=d.depth, dist=d.dist, wax=d.wall_axis, wpos=d.wall_pos, wkind=d.wall_kind, dsec=d.door_sec,
+                spawn_sec=d.spawn_sec, ndist=d.node_dist, spawn=d.spawn, spawn_ok=d.spawn_ok, area=d.area, spec=d.spec,
+                hol=d.holonomy, mpos=d.map_pos, dseam=d.door_seam)
 
 
 def canon_step(s):
     """per-step scalars of one game"""
-    return dict(room=s['room'], x=s['x'], y=s['y'], va=s['va'], mir=s['mir'], hp=s['hp'], kills=s['kills'], inv=s['inv'],
-                fire=s['fire'], aim=s['aim'], t=s['t'], steps=s['steps'], floor=s['dun']['floor'],
-                hroom=s['hroom'], hsec=s['hsec'], hx=s['hx'], hy=s['hy'], hhp=s['hhp'], htimer=s['htimer'], hhere=s['hhere'],
-                hdead=s['hdead'], hflash=s['hflash'],
-                n_alive=jnp.sum(s['en'][s['room'], :, 7] > .5), n_pb=jnp.sum(s['pb'][:, 5] > .5), n_eb=jnp.sum(s['eb'][:, 5] > .5))
+    P, H = s.player, s.hunter
+    return dict(room=s.room, x=P.x, y=P.y, va=s.view_angle, mir=s.mirror, hp=P.hp, kills=s.kills, inv=P.inv,
+                fire=P.fire, aim=P.aim, t=s.t, steps=s.steps, floor=s.dun.floor,
+                hroom=H.room, hsec=H.sec, hx=H.x, hy=H.y, hhp=H.hp, htimer=H.timer, hhere=H.here,
+                hdead=H.dead, hflash=H.flash,
+                n_alive=jnp.sum(s.enemies.alive[s.room]), n_pb=jnp.sum(s.pb.alive), n_eb=jnp.sum(s.eb.alive))
 
 
 def canon_state(s):
     """the whole state of one game (minus the dungeon, checked separately)"""
-    en, pb, eb, pk = s['en'], s['pb'], s['eb'], s['pk']
+    en, pb, eb, pk = s.enemies, s.pb, s.eb, s.pickups
+    xy = lambda p: jnp.stack([p.x, p.y], -1)
     out = canon_step(s)
-    out.update(visited=s['visited'], wopen=s['wopen'], spawned=s['spawned'], key=jax.random.key_data(s['key']) if jnp.issubdtype(s['key'].dtype, jax.dtypes.prng_key) else s['key'],
-               en_pos=en[..., 0:2], en_hp=en[..., 2], en_shooter=en[..., 3] > .5, en_fire=en[..., 4], en_telegraph=en[..., 5],
-               en_flash=en[..., 6], en_alive=en[..., 7] > .5,
-               pb_pos=pb[:, 0:2], pb_vel=pb[:, 2:4], pb_life=pb[:, 4], pb_alive=pb[:, 5] > .5,
-               eb_pos=eb[:, 0:2], eb_vel=eb[:, 2:4], eb_life=eb[:, 4], eb_alive=eb[:, 5] > .5,
-               pk_pos=pk[..., 0:2], pk_alive=pk[..., 2] > .5)
+    out.update(visited=s.visited, wopen=s.wall_open, spawned=s.spawned, key=s.key,
+               en_pos=xy(en), en_hp=en.hp, en_shooter=en.shooter, en_fire=en.fire, en_telegraph=en.telegraph,
+               en_flash=en.flash, en_alive=en.alive,
+               pb_pos=xy(pb), pb_vel=jnp.stack([pb.vx, pb.vy], -1), pb_life=pb.life, pb_alive=pb.alive,
+               eb_pos=xy(eb), eb_vel=jnp.stack([eb.vx, eb.vy], -1), eb_life=eb.life, eb_alive=eb.alive,
+               pk_pos=xy(pk), pk_alive=pk.alive)
     return out
 
 
-def dungeon_of(s): return s['dun']
+def dungeon_of(s): return s.dun
 
 
 def keep_alive(s, on):
     """top up hp (so these games live long enough to explore)"""
-    return {**s, 'hp': jnp.where(on, jnp.int32(5), s['hp'])}
+    return s.replace(player=s.player.replace(hp=jnp.where(on, jnp.int32(5), s.player.hp)))
 
 
 def to_stairs(s):
     """stand on the exit pad of a cleared exit room (as the viewer's debug key N)"""
-    d = s['dun']; ex = d['exit']; pd = d['pad'][ex]
-    return {**s, 'room': ex, 'x': pd[0], 'y': pd[1], 'spawned': jnp.ones_like(s['spawned']), 'inv': jnp.float32(9.),
-            'en': s['en'].at[ex, :, 7].set(0.), 'wopen': s['wopen'] | (d['wkind'] > 0)}
+    d = s.dun; ex = d.exit; pd = d.pad[ex]
+    return s.replace(room=ex, player=s.player.replace(x=pd[0], y=pd[1], inv=jnp.float32(9.)), spawned=jnp.ones_like(s.spawned),
+                     enemies=s.enemies.replace(alive=s.enemies.alive.at[ex].set(False)), wall_open=s.wall_open | (d.wall_kind > 0))
 
 
 # ---------------------------------------------------------------- driver (layout independent)

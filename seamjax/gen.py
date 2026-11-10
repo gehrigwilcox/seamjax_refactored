@@ -8,17 +8,17 @@ loops), start/exit, and every room's shape, obstacles, exit pad and spawn points
 """
 import numpy as np, jax, jax.numpy as jnp
 from jax import lax
-from seamjax.env import CX, CY, VW, VH, GAP, TAU, hits_obs, hnode
 from seamjax.difficulty import difficulty
 from seamjax.specs import load_specs
+from seamjax.env import hits_obs
+from seamjax.core.config import (TAU, CX, CY, DOOR_GAP as GAP, MAX_ROOMS as R, MAX_SIDES as NS_, MAX_OBSTACLES as NO, N_SPAWN_POINTS as NSP,
+                                 PLAYER_R as PR_, GRID_W as GW, GRID_H as GH, GRID_CELL as CS, ROOM_RC as RC, ROOM_SQUASH_MIN as SMIN,
+                                 DOOR_INSET, INF, WALL_GATED_P as GATED_P, WALL_THICK as WALL_TH, WALL_CLEAR, WALL_MINLEN)
+from seamjax.core.types import Dungeon, Sides, Obstacles
 
-R, NS_, NO, NSP = 40, 12, 6, 16
-PR_ = 11.
-GW, GH, CS = 48, 30, 20.            # coarse walkability grid
-AREA_PER_ENEMY = 30000.
-RC, SMIN, DOOR_INSET = 285., .74, 14.
-INF = 999
-GATED_P, WALL_TH, WALL_CLEAR, WALL_MINLEN = .5, 16., 40., 140.     # same numbers as TUNE.walls in the JS game
+def _ob(obs, ot):
+    """packed obstacle rows [x, y, w|r, h, is_wall] + kinds -> Obstacles (the generator still works on packed rows internally)"""
+    return Obstacles(kind=ot, pos=obs[..., 0:2], size=obs[..., 2:4], wall=obs[..., 4] > 0)
 
 def _gum(key, shape): return jax.random.gumbel(key, shape)
 
@@ -38,7 +38,7 @@ _XS = (np.arange(GW)+.5)*CS; _YS = (np.arange(GH)+.5)*CS                  # nump
 _X, _Y = np.meshgrid(_XS, _YS)                                       # [GH, GW]
 
 def free_grid(side, n, obs, ot):
-    return jax.vmap(jax.vmap(lambda x, y: _inside(side, n, x, y, PR_+4) & ~hits_obs(x, y, PR_+4, obs, ot)))(_X, _Y)
+    return jax.vmap(jax.vmap(lambda x, y: _inside(side, n, x, y, PR_+4) & ~hits_obs(x, y, PR_+4, _ob(obs, ot))))(_X, _Y)
 
 def flood(free, side, open_mask):
     """cells reachable from the doors in open_mask (flood fill by repeated dilation); connected = all those doors in one piece"""
@@ -160,10 +160,10 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     # exit pad
     kp = jax.random.split(jax.random.fold_in(key, 77), 3)
     px = U(kp[0], (80,), CX-RC, CX+RC); py = U(kp[1], (80,), CY-RC, CY+RC)
-    okp = jax.vmap(lambda x, y: _inside(side, n, x, y, 90.) & ~hits_obs(x, y, 44., obs, ot) & at(x, y))(px, py)
+    okp = jax.vmap(lambda x, y: _inside(side, n, x, y, 90.) & ~hits_obs(x, y, 44., _ob(obs, ot)) & at(x, y))(px, py)
     xs_ = (jnp.arange(GW)+.5)*CS; ys_ = (jnp.arange(GH)+.5)*CS; XX, YY = jnp.meshgrid(xs_, ys_)
     depth = jax.vmap(jax.vmap(lambda x, y: jnp.min(jnp.where(valid, -((x-side[:, 0])*side[:, 2]+(y-side[:, 1])*side[:, 3]), 1e9))))(XX, YY)
-    clr = jax.vmap(jax.vmap(lambda x, y: ~hits_obs(x, y, 44., obs, ot)))(XX, YY)
+    clr = jax.vmap(jax.vmap(lambda x, y: ~hits_obs(x, y, 44., _ob(obs, ot))))(XX, YY)
     fc = jnp.argmax(jnp.where(reach & clr, depth, -1e9))                                                   # fallback: deepest reachable cell
     fb = jnp.stack([XX.reshape(-1)[fc], YY.reshape(-1)[fc]])
     j = jnp.argmax(okp); pad = jnp.where(jnp.any(okp), jnp.stack([px[j], py[j]]), fb)
@@ -171,7 +171,7 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     # spawn points (16 pre-validated)
     ksp = jax.random.split(jax.random.fold_in(key, 99), 2)
     sx_ = CX+(U(ksp[0], (600,))*2-1)*rb; sy_ = CY+(U(ksp[1], (600,))*2-1)*rb
-    oks = jax.vmap(lambda x, y: _inside(side, n, x, y, 40.) & ~hits_obs(x, y, 24., obs, ot) & at(x, y))(sx_, sy_)
+    oks = jax.vmap(lambda x, y: _inside(side, n, x, y, 40.) & ~hits_obs(x, y, 24., _ob(obs, ot)) & at(x, y))(sx_, sy_)
     oks = oks & ((jnp.hypot(sx_-pad[0], sy_-pad[1]) > 70) | ~is_exit)
     sec_all = jnp.where(wax == 0, 0, jnp.where(wax == 1, sy_ >= wpos, sx_ >= wpos)).astype(jnp.int32)
     rank = jnp.where(sec_all == 0, jnp.cumsum(oks & (sec_all == 0)), jnp.cumsum(oks & (sec_all == 1)))
@@ -291,11 +291,14 @@ def gen_dungeon(SP, key, floor):
     A = node_adj(wkind)
     nd0 = jnp.where(A, 1, INF); nd0 = jnp.where(jnp.eye(2*R, dtype=bool), 0, nd0)
     ndist = jnp.minimum(lax.fori_loop(0, 2*R, lambda kk, D: jnp.minimum(D, D[:, kk, None]+D[None, kk, :]), nd0), INF)
-    return dict(n_rooms=m.astype(jnp.int32), n=pn, doors=dn.astype(jnp.int32), arr=arr.astype(jnp.int32), flip=flipc.astype(jnp.int32),
-                side=z(side), obs=z(obs), obs_t=jnp.where(live[:, None], ot, -1), pad=z(pad), rb=z(rb), rin=z(rin),
-                start=start, startpos=spos[start], exit=exit_, floor=jnp.asarray(floor, jnp.int32), geo=SP['cat'][sid]+0*sid,
-                depth=depth.astype(jnp.int32), dist=dist.astype(jnp.int32), wax=wax, wpos=wpos, wkind=wkind, dsec=dsec.astype(jnp.int32), spawn_sec=ssec, ndist=ndist.astype(jnp.int32), spawn=z(spawn), spawn_ok=z(sok), area=z(area), spec=sid, hol=SP['hol'][sid],
-                mpos=z(SP['cvec'][sid][ordr]), dseam=jnp.where(dn >= 0, SP['seam'][sid][ordr], 0).astype(jnp.int32))   # mpos/dseam: only for drawing a map
+    side = z(side)
+    return Dungeon(n=pn, doors=dn.astype(jnp.int32), arrive=arr.astype(jnp.int32), flip=flipc.astype(jnp.int32),
+                   sides=Sides(mid=side[..., 0:2], normal=side[..., 2:4], tangent=side[..., 4:6], door=side[..., 6:8]),
+                   obstacles=_ob(z(obs), jnp.where(live[:, None], ot, -1)), pad=z(pad), radius=z(rb), inradius=z(rin), area=z(area),
+                   spawn=z(spawn), spawn_ok=z(sok), spawn_sec=ssec, wall_axis=wax, wall_pos=wpos, wall_kind=wkind, door_sec=dsec.astype(jnp.int32),
+                   depth=depth.astype(jnp.int32), map_pos=z(SP['cvec'][sid][ordr]), door_seam=jnp.where(dn >= 0, SP['seam'][sid][ordr], 0).astype(jnp.int32),
+                   n_rooms=m.astype(jnp.int32), start=start, startpos=spos[start], exit=exit_, floor=jnp.asarray(floor, jnp.int32),
+                   category=SP['cat'][sid]+0*sid, spec=sid, holonomy=SP['hol'][sid], dist=dist.astype(jnp.int32), node_dist=ndist.astype(jnp.int32))
 
 def gen_source(SP):
     """source(key, floor, idx=None) for make_env: a fresh GPU-generated dungeon for that floor"""

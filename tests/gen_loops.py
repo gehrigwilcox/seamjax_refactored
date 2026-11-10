@@ -3,6 +3,7 @@ import numpy as np, jax, jax.numpy as jnp
 jax.config.update('jax_enable_x64', False)
 from seamjax.gen import *
 from seamjax.env import *
+from seamjax.core.config import *
 SP=load_specs(); E=make_env(gen_source(SP))
 B=128
 keys=jax.random.split(jax.random.PRNGKey(5),B)
@@ -20,9 +21,9 @@ def chain(dn,ar,fl,n,r,c):
     return None
 tested=fail=0; loops_by_cat={}
 for i in range(B):
-    dun={k:np.array(v[i]) for k,v in S['dun'].items()}; dn,ar,fl,n=dun['doors'],dun['arr'],dun['flip'],dun['n']
+    dun=jax.tree_util.tree_map(lambda v:np.array(v[i]),S.dun); dn,ar,fl,n=dun.doors,dun.arrive,dun.flip,dun.n
     seen=set(); s0=jax.tree_util.tree_map(lambda a:a[i],S)
-    for r in range(int(dun['n_rooms'])):
+    for r in range(int(dun.n_rooms)):
         for c in range(n[r]):
             ch=chain(dn,ar,fl,n,r,c)
             if not ch: continue
@@ -30,15 +31,15 @@ for i in range(B):
             if key in seen: continue
             seen.add(key)
             if len(seen)>5: break
-            s=dict(s0); s['room']=jnp.int32(r); s['va']=0.; s['mir']=1.
-            s['inv']=100.; s['hdead']=1e9
+            s=s0.replace(room=jnp.int32(r),view_angle=jnp.float32(0.),mirror=jnp.float32(1.),player=s0.player.replace(inv=jnp.float32(100.)),
+                         hunter=s0.hunter.replace(dead=jnp.float32(1e9)))
             for (rr,k) in ch:
-                assert int(s['room'])==rr
-                sd=np.array(dun['side'][rr,k]); s['x']=jnp.float32(sd[6]+sd[2]*10); s['y']=jnp.float32(sd[7]+sd[3]*10)
+                assert int(s.room)==rr
+                dr,nr_=dun.sides.door[rr,k],dun.sides.normal[rr,k]; s=s.replace(player=s.player.replace(x=jnp.float32(dr[0]+nr_[0]*10),y=jnp.float32(dr[1]+nr_[1]*10)))
                 s,_,_=step(s,jnp.zeros(4))
-            t=float(s['va'])%TAU; t=min(t,TAU-t)*180/np.pi; want=float(dun['hol'])%360; want=min(want,360-want)
+            t=float(s.view_angle)%TAU; t=min(t,TAU-t)*180/np.pi; want=float(dun.holonomy)%360; want=min(want,360-want)
             tested+=1
-            ok=int(s['room'])==r and float(s['mir'])==1 and abs(t-want)<1e-2
+            ok=int(s.room)==r and float(s.mirror)==1 and abs(t-want)<1e-2
             if not ok: fail+=1
 print('generated-dungeon corner loops walked:',tested,'failed:',fail)
 assert tested>100 and fail==0, 'corner loops (curvature / seam holonomy) do not match the tiling'

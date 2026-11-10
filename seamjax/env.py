@@ -8,119 +8,143 @@ games at once and `jit` puts them on a GPU unchanged.
 Geometry note: all the non-Euclidean content (curved tilings, glued edges, mirrored seams) is already
 baked into the door tables (neighbor room, arrival side, flip flag). The only geometry done per step is
 the view rotation/mirror on room change: one atan2 and a sign.
+
+The state is a GameState (core/types.py); every constant comes from core/config.py.
 """
-import os, numpy as np, jax, jax.numpy as jnp
+import numpy as np, jax, jax.numpy as jnp
 from jax import lax
 from seamjax.difficulty import difficulty, FLOOR_CAP
+from seamjax.core import struct
+from seamjax.core.config import (
+    TAU, CX, CY, MAX_SIDES as NS, MAX_OBSTACLES as NO, MAX_ENEMIES as NE, MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB,
+    MAX_PICKUPS as NPK, N_SPAWN_POINTS, GEN_CHUNK, DOOR_GAP, ENTRY_INSET, PLAYER_R, PLAYER_SPEED, MAX_HP, INVULN, AIM_DEADZONE,
+    FIRE_DELAY, BULLET_SPEED, BULLET_LIFE, BULLET_MUZZLE, BULLET_R, PICKUP_R, PAD_R, CHASER_R, SHOOTER_R, CHASER_HP, SHOOTER_HP,
+    CHASER_SPEED, CHASER_SPEED_PER_FLOOR, SHOOTER_SPEED, SHOOTER_RETREAT, SHOOTER_APPROACH, SHOOTER_STRAFE, SHOOTER_FIRST_SHOT,
+    SHOOTER_FIRST_SHOT_RAND, SHOOTER_RELOAD, SHOOTER_RELOAD_RAND, ENEMY_BULLET_SPEED, ENEMY_BULLET_LIFE, ENEMY_BULLET_R, HIT_FLASH,
+    TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX, HUNTER_HP, HUNTER_R, HUNTER_SPEED, HUNTER_SPEED_PER_FLOOR, HUNTER_HOP,
+    HUNTER_HOP_PER_FLOOR, HUNTER_HOP_MIN, HUNTER_RESPAWN, HUNTER_RESPAWN_DELAY, HUNTER_GRACE, HUNTER_DOOR_INSET, HUNTER_KILL_BONUS,
+    INF, R_KILL, R_HIT, R_ROOM, R_DESCEND, R_DEATH, R_HEAL, R_GATE)
+from seamjax.core.types import (Obstacles, Player, Bullets, Enemies, Pickups, Hunter, StepEvents, GameState,
+                                OBST_NONE, OBST_CIRCLE, OBST_RECT, AXIS_NONE, AXIS_H, WALL_SOLID, WALL_GATED)
 
-VW, VH, CX, CY = 960., 600., 480., 300.
-TAU = 2*np.pi
-PR, GAP, PSPEED, MAXHP = 11., 34., 215., 5
-NS, NO, NE, NB, NEB, NPK = 12, 6, 10, 24, 24, 6           # max sides, obstacles, enemies per room, player bullets, enemy bullets
-FIRE_DELAY, BSPEED, BLIFE, INVULN = .14, 520., .9, 1.
-H_HP, H_R, H_SPEED, H_SPF, H_HOP0, H_HOPF, H_HOPMIN, H_RESPAWN, H_GRACE = 18., 19., 88., 5., 5.2, .25, 2.8, 22., 1.6
-
-# reward weights (tunable)
-R_KILL, R_HIT, R_ROOM, R_DESCEND, R_DEATH, R_HUNTER, R_HEAL, R_GATE = .1, -.2, .05, 5., -5., .5, .05, .05
-PICKUP_R = 20.
-AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX, TELEGRAPH = 30000., 160., 260., 1.0
 
 def rot_inv(x, y, va, mir):
+    """screen direction -> room frame (inverse of view_vec)"""
     c, s = jnp.cos(va), jnp.sin(va)
     return mir*(x*c + y*s), -x*s + y*c
+
 def view_vec(va, m, x, y):
+    """room-frame vector -> screen (rotate by the view angle after mirroring)"""
     u = m*x; c, s = jnp.cos(va), jnp.sin(va)
     return c*u - s*y, s*u + c*y
 
-def _push_obs(cx, cy, r, ot, o):
-    """push a circle out of one obstacle (ot: 0 circle, 1 rect, -1 none). o = [x,y,w|r,h,_]"""
+
+# ---------------------------------------------------------------- collision against room walls and obstacles
+def _push_obs(cx, cy, r, kind, pos, size):
+    """push a circle of radius r at (cx, cy) out of one obstacle"""
     # circle obstacle
-    dx, dy = cx-o[0], cy-o[1]; d = jnp.hypot(dx, dy); m = r+o[2]
+    dx, dy = cx-pos[0], cy-pos[1]; d = jnp.hypot(dx, dy); m = r+size[0]
     k = jnp.where(d < 1e-4, 0., (m-d)/jnp.maximum(d, 1e-9))
-    hc = (ot == 0) & (d < m)
+    hc = (kind == OBST_CIRCLE) & (d < m)
     cx_c = jnp.where(hc, jnp.where(d < 1e-4, cx+m, cx+dx*k), cx)
     cy_c = jnp.where(hc, jnp.where(d < 1e-4, cy, cy+dy*k), cy)
     # rect obstacle
-    qx, qy = jnp.clip(cx, o[0], o[0]+o[2]), jnp.clip(cy, o[1], o[1]+o[3])
+    qx, qy = jnp.clip(cx, pos[0], pos[0]+size[0]), jnp.clip(cy, pos[1], pos[1]+size[1])
     rx, ry = cx-qx, cy-qy; d2 = rx*rx+ry*ry
-    hr = (ot == 1) & (d2 < r*r)
+    hr = (kind == OBST_RECT) & (d2 < r*r)
     d_ = jnp.sqrt(jnp.maximum(d2, 1e-12)); kr = (r-d_)/d_
-    l, rr, t, b = cx-o[0], o[0]+o[2]-cx, cy-o[1], o[1]+o[3]-cy
+    l, rr, t, b = cx-pos[0], pos[0]+size[0]-cx, cy-pos[1], pos[1]+size[1]-cy
     mn = jnp.minimum(jnp.minimum(l, rr), jnp.minimum(t, b))
-    ix = jnp.where(mn == l, o[0]-r, jnp.where(mn == rr, o[0]+o[2]+r, cx))
-    iy = jnp.where((mn != l) & (mn != rr), jnp.where(mn == t, o[1]-r, o[1]+o[3]+r), cy)
+    ix = jnp.where(mn == l, pos[0]-r, jnp.where(mn == rr, pos[0]+size[0]+r, cx))
+    iy = jnp.where((mn != l) & (mn != rr), jnp.where(mn == t, pos[1]-r, pos[1]+size[1]+r), cy)
     inside = d2 <= 1e-4
     cx_r = jnp.where(hr, jnp.where(inside, ix, cx+rx*kr), cx)
     cy_r = jnp.where(hr, jnp.where(inside, iy, cy+ry*kr), cy)
-    isr = ot == 1
+    isr = kind == OBST_RECT
     return jnp.where(isr, cx_r, cx_c), jnp.where(isr, cy_r, cy_c)
 
-def push_all_obs(x, y, r, obs, ot):
+def push_all_obs(x, y, r, ob: Obstacles):
     for i in range(NO):
-        x, y = _push_obs(x, y, r, ot[i], obs[i])
+        x, y = _push_obs(x, y, r, ob.kind[i], ob.pos[i], ob.size[i])
     return x, y
 
-def hits_obs(x, y, r, obs, ot):
-    def one(o, t):
-        circ = jnp.hypot(x-o[0], y-o[1]) < r+o[2]
-        qx, qy = jnp.clip(x, o[0], o[0]+o[2]), jnp.clip(y, o[1], o[1]+o[3])
+def hits_obs(x, y, r, ob: Obstacles):
+    """does a circle of radius r at (x, y) touch any obstacle"""
+    def one(kind, pos, size):
+        circ = jnp.hypot(x-pos[0], y-pos[1]) < r+size[0]
+        qx, qy = jnp.clip(x, pos[0], pos[0]+size[0]), jnp.clip(y, pos[1], pos[1]+size[1])
         rect = (x-qx)**2+(y-qy)**2 < r*r
-        return jnp.where(t == 0, circ, jnp.where(t == 1, rect, False))
-    return jnp.any(jax.vmap(one)(obs, ot))
+        return jnp.where(kind == OBST_CIRCLE, circ, jnp.where(kind == OBST_RECT, rect, False))
+    return jnp.any(jax.vmap(one)(ob.kind, ob.pos, ob.size))
 
-def inside_poly(side, n, x, y, m):
+def side_dist(sides, x, y):
+    """signed distance of (x, y) from every side line (negative inside)"""
+    return (x-sides.mid[:, 0])*sides.normal[:, 0] + (y-sides.mid[:, 1])*sides.normal[:, 1]
+
+def inside_poly(sides, n, x, y, m):
     valid = jnp.arange(NS) < n
-    d = (x-side[:, 0])*side[:, 2] + (y-side[:, 1])*side[:, 3]
+    d = side_dist(sides, x, y)
     return jnp.all(jnp.where(valid, d <= -m, True))
 
-def push_inside(x, y, r, side, n):
+def push_inside(x, y, r, sides, n):
     def body(i, c):
-        x, y = c; k = i % NS; S = side[k]
-        d = (x-S[0])*S[2] + (y-S[1])*S[3]
+        x, y = c; k = i % NS; mid, nrm = sides.mid[k], sides.normal[k]
+        d = (x-mid[0])*nrm[0] + (y-mid[1])*nrm[1]
         hit = (k < n) & (d > -r)
-        return jnp.where(hit, x-S[2]*(d+r), x), jnp.where(hit, y-S[3]*(d+r), y)
+        return jnp.where(hit, x-nrm[0]*(d+r), x), jnp.where(hit, y-nrm[1]*(d+r), y)
     return lax.fori_loop(0, 2*NS, body, (x, y))
 
-def clamp_player(x, y, side, n, doors):
-    gh = GAP - PR*.2 - .01
+def clamp_player(x, y, sides, n, doors):
+    """keep the player inside the room except through door openings; returns (x, y, side being exited or -1)"""
+    gh = DOOR_GAP - PLAYER_R*.2 - .01
     def body(i, c):
-        x, y, ex = c; k = i % NS; S = side[k]
-        d = (x-S[0])*S[2] + (y-S[1])*S[3]
-        active = (k < n) & (d > -PR)
-        lat = (x-S[6])*S[4] + (y-S[7])*S[5]
+        x, y, ex = c; k = i % NS; mid, nrm, tan, door = sides.mid[k], sides.normal[k], sides.tangent[k], sides.door[k]
+        d = (x-mid[0])*nrm[0] + (y-mid[1])*nrm[1]
+        active = (k < n) & (d > -PLAYER_R)
+        lat = (x-door[0])*tan[0] + (y-door[1])*tan[1]
         chan = (doors[k] >= 0) & (jnp.abs(lat) < gh)
         ex = jnp.where(active & chan & (d > 6), k, ex)
         push = active & ~chan
-        return jnp.where(push, x-S[2]*(d+PR), x), jnp.where(push, y-S[3]*(d+PR), y), ex
+        return jnp.where(push, x-nrm[0]*(d+PLAYER_R), x), jnp.where(push, y-nrm[1]*(d+PLAYER_R), y), ex
     return lax.fori_loop(0, 2*NS, body, (x, y, jnp.int32(-1)))
 
-# ---------------- sections: an inner wall splits a room in two ----------------
-# dun['wax'][r]: 0 no wall, 1 horizontal (splits by y), 2 vertical (splits by x); dun['wpos'][r]: its coordinate
-# dun['wkind'][r]: 0 none, 1 solid (never opens), 2 gated (opens when your side is cleared)
-# the wall itself is an ordinary rect obstacle flagged by obs[...,4] > 0; it vanishes once state['wopen'][r]
+
+# ---------------------------------------------------------------- sections: an inner wall splits a room in two
 def room_obs(s, room):
-    obs = s['dun']['obs'][room]; ot = s['dun']['obs_t'][room]
-    return obs, jnp.where((obs[:, 4] > 0) & s['wopen'][room], -1, ot)
+    """the obstacles of a room as they block things now (an open inner wall no longer counts)"""
+    ob = s.dun.obstacles[room]
+    return ob.replace(kind=jnp.where(ob.wall & s.wall_open[room], OBST_NONE, ob.kind))
 
 def sec_point(dun, room, x, y):
-    ax, pos = dun['wax'][room], dun['wpos'][room]
-    return jnp.where(ax == 0, 0, jnp.where(ax == 1, y >= pos, x >= pos)).astype(jnp.int32)
+    """section (0 / 1) of the room that (x, y) lies in"""
+    ax, pos = dun.wall_axis[room], dun.wall_pos[room]
+    return jnp.where(ax == AXIS_NONE, 0, jnp.where(ax == AXIS_H, y >= pos, x >= pos)).astype(jnp.int32)
 
 def eff_sec(s, room, sec):                                    # an opened wall merges the two sections
-    return jnp.where(s['wopen'][room], 0, sec)
+    return jnp.where(s.wall_open[room], 0, sec)
 
 def hnode(dun, r, sec):
     """node of the Hunter's world: a room-section, except that a gated wall does not separate (the Hunter ignores gates)"""
-    return 2*r + jnp.where(dun['wkind'][r] == 1, sec, 0)
+    return 2*r + jnp.where(dun.wall_kind[r] == WALL_SOLID, sec, 0)
+
+def player_node(s):
+    return hnode(s.dun, s.room, sec_point(s.dun, s.room, s.player.x, s.player.y))
 
 def cnd(pred, f, s):
     """lax.cond over the game state without dragging the dungeon tables through the select (they never change in a step)"""
-    dun = s['dun']; rest = {k: v for k, v in s.items() if k != 'dun'}
-    out = lax.cond(pred, lambda r: {k: v for k, v in f({**r, 'dun': dun}).items() if k != 'dun'}, lambda r: r, rest)
-    return {**out, 'dun': dun}
+    dun = s.dun
+    out = lax.cond(pred, lambda r: f(r.replace(dun=dun)).replace(dun=None), lambda r: r, s.replace(dun=None))
+    return out.replace(dun=dun)
 
-GEN_CHUNK = int(os.environ.get('SEAM_GEN_CHUNK', 64))            # dungeons generated at once; building a dungeon needs ~4 MB of scratch, so this bounds GPU memory
+def _put(pool, i, new):
+    """write one entity into slot i of a pool (new: the same type, one value per field)"""
+    return jax.tree_util.tree_map(lambda a, v: a.at[i].set(v), pool, new)
 
+def _set_room(pool, room, rows):
+    return jax.tree_util.tree_map(lambda a, v: a.at[room].set(v), pool, rows)
+
+
+# ---------------------------------------------------------------- batching helpers
 def cvmap(f, chunk=GEN_CHUNK):
     """vmap(f) that runs `chunk` rows at a time (lax.map over chunks): same result, bounded scratch memory"""
     def g(*args):
@@ -147,387 +171,399 @@ def regen_where(S, need, fn, chunk=GEN_CHUNK):
     S, _ = lax.while_loop(lambda c: jnp.any(c[1]), body, (S, need))
     return S
 
+
+# ---------------------------------------------------------------- queries used by the observation, the renderers and the HUD
+def hunter_dist(s):
+    """doors between you and the Hunter in section space: 0 same section, -1 down, -2 cut off by a wall"""
+    d = s.dun.node_dist[hnode(s.dun, s.hunter.room, s.hunter.sec), player_node(s)]
+    return jnp.where(s.hunter.dead > 0, -1, jnp.where(d >= INF, -2, d)).astype(jnp.int32)
+
+def hunter_door(s):
+    """side of your room through which the Hunter would come (it is one door-step away from your section), else -1"""
+    room = s.room; dun = s.dun; hr = s.hunter.room
+    pn = player_node(s); hn = hnode(dun, hr, s.hunter.sec)
+    doors = dun.doors[hr]; arrk = dun.arrive[hr]
+    ok = (doors == room) & (hnode(dun, hr, dun.door_sec[hr]) == hn) & (hnode(dun, room, dun.door_sec[room, arrk]) == pn)
+    k = jnp.argmax(ok)
+    return jnp.where((hn != pn) & (s.hunter.dead <= 0) & jnp.any(ok), arrk[k], -1)
+
+def hunter_visible(s):
+    return (s.hunter.room == s.room) & s.hunter.here & (s.hunter.dead <= 0)
+
+
+# ---------------------------------------------------------------- empty pools
+def _bullets(n):
+    z = jnp.zeros(n); return Bullets(x=z, y=z, vx=z, vy=z, life=z, alive=jnp.zeros(n, bool))
+
+def _enemies(R):
+    z = jnp.zeros((R, NE)); b = jnp.zeros((R, NE), bool)
+    return Enemies(x=z, y=z, hp=z, shooter=b, fire=z, telegraph=z, flash=z, alive=b)
+
+def _no_events(shake=False):
+    i0 = jnp.int32(0)
+    return StepEvents(took=i0, newroom=i0, killed=i0, hit_hunter=i0, descended=False, shake=shake, healed=i0, opened=i0)
+
+
+# ---------------------------------------------------------------- observation (egocentric, screen frame, no map)
+OBS_EN, OBS_EB = 8, 8
+OBS_DIM = 8 + NS*8 + OBS_EN*5 + OBS_EB*4 + 8 + 3 + 7
+
+def observe(s):
+    dun = s.dun; room = s.room; n = dun.n[room]; sides = dun.sides[room]; doors = dun.doors[room]; P = s.player
+    va, mir = s.view_angle, s.mirror; sc = 1/300.
+    x, y = P.x-CX, P.y-CY
+    vx, vy = view_vec(va, mir, x, y)
+    hd_ = dun.node_dist[hnode(dun, s.hunter.room, s.hunter.sec), player_node(s)]
+    hdist = jnp.where(s.hunter.dead > 0, -1., jnp.where(hd_ >= INF, -2., hd_.astype(jnp.float32)))     # -1 down, -2 cut off by a wall
+    head = jnp.stack([vx*sc, vy*sc, P.hp/MAX_HP, (P.inv > 0).astype(jnp.float32), n/12., mir, jnp.clip(hdist, -2, 12)/12., jnp.minimum(dun.floor, FLOOR_CAP)/FLOOR_CAP])
+    # sides: valid, outward normal (screen), door, signed dist of player, door offset along the side, hunter-arrival door, wall side
+    nxs, nys = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(sides.normal[:, 0], sides.normal[:, 1])
+    dpl = side_dist(sides, P.x, P.y)*sc
+    lat = ((sides.door[:, 0]-sides.mid[:, 0])*sides.tangent[:, 0] + (sides.door[:, 1]-sides.mid[:, 1])*sides.tangent[:, 1])*sc
+    valid = (jnp.arange(NS) < n).astype(jnp.float32)
+    warn = (jnp.arange(NS) == hunter_door(s)).astype(jnp.float32)
+    sf = jnp.stack([valid, nxs*valid, nys*valid, (doors >= 0)*valid, dpl*valid, lat*valid, warn*valid, (dun.door_sec[room] > 0)*valid*(dun.wall_kind[room] > 0)], 1)
+    en = s.enemies[room]; alive = en.alive
+    rx, ry = en.x-P.x, en.y-P.y
+    ex_, ey_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(rx, ry)
+    dist = jnp.where(alive, jnp.hypot(rx, ry), 1e9); order = jnp.argsort(dist)[:OBS_EN]
+    ef = jnp.stack([alive[order], ex_[order]*sc*alive[order], ey_[order]*sc*alive[order], en.shooter[order], en.hp[order]/4.*alive[order]], 1)
+    eb = s.eb; balive = eb.alive
+    brx, bry = eb.x-P.x, eb.y-P.y
+    bx_, by_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(brx, bry)
+    bvx, bvy = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(eb.vx, eb.vy)
+    bd = jnp.where(balive, jnp.hypot(brx, bry), 1e9); bo = jnp.argsort(bd)[:OBS_EB]
+    bf = jnp.stack([bx_[bo]*sc*balive[bo], by_[bo]*sc*balive[bo], bvx[bo]/190.*balive[bo], bvy[bo]/190.*balive[bo]], 1)
+    # hunter + exit
+    H = s.hunter
+    hrx, hry = view_vec(va, mir, H.x-P.x, H.y-P.y)
+    hv = hunter_visible(s)
+    pad = dun.pad[room]; prx, pry = view_vec(va, mir, pad[0]-P.x, pad[1]-P.y)
+    isx = room == dun.exit
+    tail = jnp.stack([hv*1., hv*hrx*sc, hv*hry*sc, hv*H.hp/HUNTER_HP, isx*1., isx*prx*sc, isx*pry*sc, (~jnp.any(alive))*1.])
+    pk = s.pickups[room]; pa = pk.alive
+    pdist = jnp.where(pa, jnp.hypot(pk.x-P.x, pk.y-P.y), 1e9); pi_ = jnp.argmin(pdist)
+    prx2, pry2 = view_vec(va, mir, pk.x[pi_]-P.x, pk.y[pi_]-P.y); pany = jnp.any(pa)
+    ptail = jnp.stack([pany*1., pany*prx2*sc, pany*pry2*sc])
+    # inner wall: present, gated, open, its normal on screen, your signed distance to it, your side
+    ax = dun.wall_axis[room]; hasw = ax > 0; wnx, wny = view_vec(va, mir, (ax == 2)*1., (ax == 1)*1.)
+    wd = jnp.where(ax == AXIS_H, P.y, P.x)-dun.wall_pos[room]
+    psec = sec_point(dun, room, P.x, P.y).astype(jnp.float32)
+    wtail = jnp.stack([hasw*1., (dun.wall_kind[room] == WALL_GATED)*1., s.wall_open[room]*1., hasw*wnx, hasw*wny, hasw*wd*sc, hasw*psec])
+    return jnp.concatenate([head, sf.reshape(-1), ef.reshape(-1), bf.reshape(-1), tail, ptail, wtail])
+
+
+# ---------------------------------------------------------------- the game
 def make_env(source):
-    """source(key, floor, idx=None) -> dict of padded dungeon tables for ONE dungeon. Returns the env functions.
+    """source(key, floor, idx=None) -> Dungeon for ONE dungeon. Returns the env functions.
     Every game carries its own dungeon in its state, so a GPU generator can replace the pool unchanged."""
-    R = source(jax.random.PRNGKey(0), jnp.int32(1), 0)['n'].shape[0]
+    R = source(jax.random.PRNGKey(0), jnp.int32(1), 0).n.shape[0]
 
     # ---------------- state ----------------
     def reset(key, floor=1, d=None):
         """a fresh run at `floor` (floor 1 is the start of a run)"""
         k0, k2, k3 = jax.random.split(key, 3)
         dun = source(k0, jnp.asarray(floor, jnp.int32), d)
-        start = dun['start']; ex = dun['exit']
-        depth = dun['depth']; thr = jnp.maximum(2, jnp.floor(depth[ex]*.5).astype(jnp.int32))
-        cand = (depth >= thr) & (jnp.arange(R) < dun['n_rooms'])
+        start = dun.start; ex = dun.exit
+        depth = dun.depth; thr = jnp.maximum(2, jnp.floor(depth[ex]*.5).astype(jnp.int32))
+        cand = (depth >= thr) & (jnp.arange(R) < dun.n_rooms)
         gum = jax.random.gumbel(k2, (R,))
         hroom = jnp.where(jnp.any(cand), jnp.argmax(jnp.where(cand, gum, -1e9)), ex)
-        s = dict(dun=dun, room=start, x=jnp.float32(CX), y=jnp.float32(CY), inv=0., fire=0., aim=0., va=0., mir=1., hp=jnp.int32(MAXHP),
-                 t=0., steps=jnp.int32(0), kills=jnp.int32(0), visited=jnp.zeros(R, bool).at[start].set(True),
-                 pb=jnp.zeros((NB, 6)), eb=jnp.zeros((NEB, 6)), en=jnp.zeros((R, NE, 8)), pk=jnp.zeros((R, NPK, 3)),
-                 hroom=hroom.astype(jnp.int32), hsec=jnp.int32(0), htimer=difficulty(floor)['hunter_first'], hhere=False, hx=0., hy=0., hhp=H_HP, hdead=0.,
-                 hflash=0., done=False, key=k3, took=jnp.int32(0), newroom=jnp.int32(0), killed=jnp.int32(0),
-                 hit_hunter=jnp.int32(0), descended=False, shake=False, healed=jnp.int32(0), opened=jnp.int32(0),
-                 wopen=jnp.zeros(R, bool), spawned=jnp.zeros((R, 2), bool))
-        # same fix-up as the JS game: don't start inside an obstacle
-        side = dun['side'][start]; obs, ot = dun['obs'][start], dun['obs_t'][start]
-        s['x'] = dun['startpos'][0]; s['y'] = dun['startpos'][1]      # a reachable spot near the middle of the start room
-        s['spawned'] = s['spawned'].at[start, sec_point(dun, start, s['x'], s['y'])].set(True)    # the start section stays empty
-        s['hsec'] = jnp.where(dun['wkind'][hroom] > 0, jax.random.bernoulli(jax.random.fold_in(k2, 3)), False).astype(jnp.int32)
+        x, y = dun.startpos[0], dun.startpos[1]                     # a reachable spot near the middle of the start room
+        hsec = jnp.where(dun.wall_kind[hroom] > 0, jax.random.bernoulli(jax.random.fold_in(k2, 3)), False).astype(jnp.int32)
+        z = jnp.zeros((R, NPK))
+        s = GameState(dun=dun, room=start, view_angle=0., mirror=1.,
+                      player=Player(x=x, y=y, hp=jnp.int32(MAX_HP), inv=0., fire=0., aim=0.),
+                      pb=_bullets(NB), eb=_bullets(NEB), enemies=_enemies(R), pickups=Pickups(x=z, y=z, alive=jnp.zeros((R, NPK), bool)),
+                      hunter=Hunter(room=hroom.astype(jnp.int32), sec=hsec, timer=difficulty(floor)['hunter_first'], here=False, x=0., y=0.,
+                                    hp=HUNTER_HP, dead=0., flash=0.),
+                      visited=jnp.zeros(R, bool).at[start].set(True), wall_open=jnp.zeros(R, bool),
+                      spawned=jnp.zeros((R, 2), bool).at[start, sec_point(dun, start, x, y)].set(True),       # the start section stays empty
+                      t=0., steps=jnp.int32(0), kills=jnp.int32(0), done=False, key=k3, ev=_no_events())
         return jax.tree_util.tree_map(jnp.asarray, s)
 
     def hurt(s):
-        ok = s['inv'] <= 0
-        return {**s, 'hp': s['hp']-ok.astype(jnp.int32), 'inv': jnp.where(ok, INVULN, s['inv']), 'took': s.get('took', 0)+ok.astype(jnp.int32)}
+        ok = s.player.inv <= 0
+        return s.replace(player=s.player.replace(hp=s.player.hp-ok.astype(jnp.int32), inv=jnp.where(ok, INVULN, s.player.inv)),
+                         ev=s.ev.replace(took=s.ev.took+ok.astype(jnp.int32)))
 
     # ---------------- room change (the whole non-Euclidean part of a step) ----------------
     def transit(s, ex):
-        room = s['room']
-        n = s['dun']['n'][room]; nr = s['dun']['doors'][room, ex]; arrive = s['dun']['arr'][room, ex]; fl = s['dun']['flip'][room, ex]
+        room = s.room; dun = s.dun
+        n = dun.n[room]; nr = dun.doors[room, ex]; arrive = dun.arrive[room, ex]; fl = dun.flip[room, ex]
         phi = TAU*ex/n
-        hx, hy = view_vec(s['va'], s['mir'], jnp.sin(phi), -jnp.cos(phi))
-        m2 = jnp.where(fl == 1, -s['mir'], s['mir']); psi = TAU*arrive/s['dun']['n'][nr]
+        hx, hy = view_vec(s.view_angle, s.mirror, jnp.sin(phi), -jnp.cos(phi))
+        m2 = jnp.where(fl == 1, -s.mirror, s.mirror); psi = TAU*arrive/dun.n[nr]
         va = jnp.mod(jnp.arctan2(-hy, -hx) - jnp.arctan2(-jnp.cos(psi), m2*jnp.sin(psi)), TAU)
-        S = s['dun']['side'][nr, arrive]
-        s = {**s, 'room': nr, 'va': va, 'mir': m2, 'x': S[6]-S[2]*30, 'y': S[7]-S[3]*30,
-             'pb': jnp.zeros((NB, 6)), 'eb': jnp.zeros((NEB, 6))}
-        # hunter grace when you leave its room
-        left = s['hroom'] == room
-        s['htimer'] = jnp.where(left, jnp.minimum(s['htimer'], H_GRACE), s['htimer']); s['hhere'] = jnp.where(left, False, s['hhere'])
-        first = ~s['visited'][nr]
-        newly = first.astype(jnp.int32)
-        s['visited'] = s['visited'].at[nr].set(True)
-        s['newroom'] = newly
-        e = eff_sec(s, nr, sec_point(s['dun'], nr, s['x'], s['y']))        # each section spawns its enemies on first entry
-        spawn = ~s['spawned'][nr, e]
-        s['spawned'] = s['spawned'].at[nr, e].set(True)
-        k, s['key'] = jax.random.split(s['key'])
-        s = cnd(spawn, lambda s: spawn_enemies(s, k, e), s)
-        return s
+        door, nrm = dun.sides.door[nr, arrive], dun.sides.normal[nr, arrive]
+        x, y = door[0]-nrm[0]*ENTRY_INSET, door[1]-nrm[1]*ENTRY_INSET
+        left = s.hunter.room == room                                       # hunter grace when you leave its room
+        hunter = s.hunter.replace(timer=jnp.where(left, jnp.minimum(s.hunter.timer, HUNTER_GRACE), s.hunter.timer),
+                                  here=jnp.where(left, False, s.hunter.here))
+        first = ~s.visited[nr]
+        s = s.replace(room=nr, view_angle=va, mirror=m2, player=s.player.replace(x=x, y=y), pb=_bullets(NB), eb=_bullets(NEB), hunter=hunter,
+                      visited=s.visited.at[nr].set(True), ev=s.ev.replace(newroom=first.astype(jnp.int32)))
+        e = eff_sec(s, nr, sec_point(dun, nr, x, y))                      # each section spawns its enemies on first entry
+        spawn = ~s.spawned[nr, e]
+        k, key = jax.random.split(s.key)
+        s = s.replace(spawned=s.spawned.at[nr, e].set(True), key=key)
+        return cnd(spawn, lambda s: spawn_enemies(s, k, e), s)
 
     def spawn_enemies(s, key, e):
-        room = s['room']
+        room = s.room; dun = s.dun
         k0, k1, k2, k3, k4 = jax.random.split(key, 5)
-        floor = jnp.minimum(s['dun']['floor'], FLOOR_CAP)
-        isx = room == s['dun']['exit']
+        floor = jnp.minimum(dun.floor, FLOOR_CAP)
+        isx = room == dun.exit
         want = 2 + jnp.floor(floor*.8).astype(jnp.int32) + jax.random.randint(k0, (), 0, 3) + jnp.where(isx, 2, 0)
-        pts = s['dun']['spawn'][room]                                # 16 pre-validated, reachable spawn points per room
-        ok0 = s['dun']['spawn_ok'][room] > 0
-        mine = ok0 & (eff_sec(s, room, s['dun']['spawn_sec'][room]) == e)
+        pts = dun.spawn[room]                                        # pre-validated, reachable spawn points
+        ok0 = dun.spawn_ok[room] > 0
+        mine = ok0 & (eff_sec(s, room, dun.spawn_sec[room]) == e)
         frac = jnp.where(jnp.any(ok0), jnp.sum(mine)/jnp.maximum(jnp.sum(ok0), 1), 1.)          # a section only holds its share of the room
-        cap = jnp.maximum(1, jnp.round(s['dun']['area'][room]*frac/AREA_PER_ENEMY).astype(jnp.int32)) + jnp.where(isx, 1, 0)
-        cnt = jnp.minimum(jnp.minimum(8, want), cap)                 # never more than the room can hold
-        minD = jnp.clip(s['dun']['rb'][room]*.55, SPAWN_MIN, SPAWN_MAX)
-        dpl = jnp.hypot(pts[:, 0]-s['x'], pts[:, 1]-s['y'])
+        cap = jnp.maximum(1, jnp.round(dun.area[room]*frac/AREA_PER_ENEMY).astype(jnp.int32)) + jnp.where(isx, 1, 0)
+        cnt = jnp.minimum(jnp.minimum(MAX_SPAWN, want), cap)         # never more than the room can hold
+        minD = jnp.clip(dun.radius[room]*.55, SPAWN_MIN, SPAWN_MAX)
+        dpl = jnp.hypot(pts[:, 0]-s.player.x, pts[:, 1]-s.player.y)
         okp = mine & (dpl >= minD*.6)                                # better to spawn fewer than to ambush
-        score = jax.random.uniform(k1, (16,)) + jnp.where(dpl >= minD, 0., -5.) + jnp.where(okp, 0., -10.)
+        score = jax.random.uniform(k1, (N_SPAWN_POINTS,)) + jnp.where(dpl >= minD, 0., -5.) + jnp.where(okp, 0., -10.)
         order = jnp.argsort(-score)[:NE]
-        ex, ey = pts[order, 0], pts[order, 1]
-        alive = okp[order] & (jnp.arange(NE) < cnt)
         shooter = jax.random.uniform(k3, (NE,)) < difficulty(floor)['shooter_p']
-        fire0 = 1 + jax.random.uniform(k4, (NE,))*1.5
-        en = jnp.stack([ex, ey, jnp.where(shooter, 4., 3.), shooter.astype(jnp.float32), fire0, jnp.full(NE, TELEGRAPH), jnp.zeros(NE), alive.astype(jnp.float32)], 1)
-        old = s['en'][room]; free = old[:, 7] < .5                   # new enemies go into free slots (the other section may be occupied)
+        new = Enemies(x=pts[order, 0], y=pts[order, 1], hp=jnp.where(shooter, SHOOTER_HP, CHASER_HP), shooter=shooter,
+                      fire=SHOOTER_FIRST_SHOT + jax.random.uniform(k4, (NE,))*SHOOTER_FIRST_SHOT_RAND, telegraph=jnp.full(NE, TELEGRAPH),
+                      flash=jnp.zeros(NE), alive=okp[order] & (jnp.arange(NE) < cnt))
+        old = s.enemies[room]; free = ~old.alive                     # new enemies go into free slots (the other section may be occupied)
         slot = jnp.argsort(~free)
-        en = old.at[slot].set(jnp.where(free[slot][:, None], en, old[slot]))
-        return {**s, 'en': s['en'].at[room].set(en)}
+        rows = jax.tree_util.tree_map(lambda o, v: o.at[slot].set(jnp.where(free[slot], v, o[slot])), old, new)
+        return s.replace(enemies=_set_room(s.enemies, room, rows))
 
     # ---------------- hunter ----------------
     def hunter_tick(s, dt):
-        room = s['room']; dun = s['dun']; floor = jnp.minimum(dun['floor'], FLOOR_CAP)
-        side, n = dun['side'][room], dun['n'][room]
-        obs, ot = room_obs(s, room)
-        pn = hnode(dun, room, sec_point(dun, room, s['x'], s['y']))          # where you are, in the Hunter's world
-        hf = jnp.maximum(s['hflash']-dt, 0.)
+        room = s.room; dun = s.dun; floor = jnp.minimum(dun.floor, FLOOR_CAP); H = s.hunter; P = s.player
+        sides, n = dun.sides[room], dun.n[room]
+        ob = room_obs(s, room)
+        pn = player_node(s)                                                      # where you are, in the Hunter's world
+        hf = jnp.maximum(H.flash-dt, 0.)
         # --- dead / respawn
-        dead = s['hdead'] > 0
-        hd2 = jnp.where(dead, s['hdead']-dt, 0.)
+        dead = H.dead > 0
+        hd2 = jnp.where(dead, H.dead-dt, 0.)
         respawn = dead & (hd2 <= 0)
-        k, key = jax.random.split(s['key']); s = {**s, 'key': key}
+        k, key = jax.random.split(s.key); s = s.replace(key=key)
         k, ksec = jax.random.split(k)
-        dfar = dun['ndist'][2*jnp.arange(R), pn]
-        far = (dfar >= 3) & (dfar < 999) & (jnp.arange(R) < dun['n_rooms'])
+        dfar = dun.node_dist[2*jnp.arange(R), pn]
+        far = (dfar >= 3) & (dfar < INF) & (jnp.arange(R) < dun.n_rooms)
         gum = jax.random.gumbel(k, (R,))
-        newr = jnp.where(jnp.any(far), jnp.argmax(jnp.where(far, gum, -1e9)), dun['exit']).astype(jnp.int32)
-        newsec = jnp.where(dun['wkind'][newr] > 0, jax.random.bernoulli(ksec), False).astype(jnp.int32)
+        newr = jnp.where(jnp.any(far), jnp.argmax(jnp.where(far, gum, -1e9)), dun.exit).astype(jnp.int32)
+        newsec = jnp.where(dun.wall_kind[newr] > 0, jax.random.bernoulli(ksec), False).astype(jnp.int32)
         # --- away: count down, hop along the true shortest route (through section nodes)
-        hr = s['hroom']; hn = hnode(dun, hr, s['hsec'])
+        hr = H.room; hn = hnode(dun, hr, H.sec)
         away = ~dead & (hn != pn)
-        tm = jnp.where(away, s['htimer']-dt, s['htimer'])
+        tm = jnp.where(away, H.timer-dt, H.timer)
         hop = away & (tm <= 0)
-        doors = dun['doors'][hr]; arrk = dun['arr'][hr]; nb = jnp.maximum(doors, 0)
-        nbnode = hnode(dun, nb, dun['dsec'][nb, arrk])
-        stepok = (doors >= 0) & (jnp.arange(NS) < dun['n'][hr]) & (hnode(dun, hr, dun['dsec'][hr]) == hn)
-        dd = jnp.where(stepok, dun['ndist'][nbnode, pn], 999)
-        bk = jnp.argmin(dd); best = doors[bk]; can = hop & (dd[bk] < 999)
+        doors = dun.doors[hr]; arrk = dun.arrive[hr]; nb = jnp.maximum(doors, 0)
+        nbnode = hnode(dun, nb, dun.door_sec[nb, arrk])
+        stepok = (doors >= 0) & (jnp.arange(NS) < dun.n[hr]) & (hnode(dun, hr, dun.door_sec[hr]) == hn)
+        dd = jnp.where(stepok, dun.node_dist[nbnode, pn], INF)
+        bk = jnp.argmin(dd); best = doors[bk]; can = hop & (dd[bk] < INF)
         arrside = arrk[bk]
-        hroom = jnp.where(can, best, hr); hsec = jnp.where(can, dun['dsec'][best, arrside], s['hsec'])
-        tm = jnp.where(can, jnp.maximum(H_HOPMIN, H_HOP0-floor*H_HOPF), tm)
+        hroom = jnp.where(can, best, hr); hsec = jnp.where(can, dun.door_sec[best, arrside], H.sec)
+        tm = jnp.where(can, jnp.maximum(HUNTER_HOP_MIN, HUNTER_HOP-floor*HUNTER_HOP_PER_FLOOR), tm)
         arrive_here = can & (nbnode[bk] == pn)
-        S = dun['side'][room, arrside]
-        hx = jnp.where(arrive_here, S[6]-S[2]*34, s['hx']); hy = jnp.where(arrive_here, S[7]-S[3]*34, s['hy'])
-        here = jnp.where(arrive_here, True, jnp.where(away, False, s['hhere']))
+        door, nrm = sides.door[arrside], sides.normal[arrside]
+        hx = jnp.where(arrive_here, door[0]-nrm[0]*HUNTER_DOOR_INSET, H.x); hy = jnp.where(arrive_here, door[1]-nrm[1]*HUNTER_DOOR_INSET, H.y)
+        here = jnp.where(arrive_here, True, jnp.where(away, False, H.here))
         # --- in the player's section: chase
         inroom = ~dead & (hnode(dun, hroom, hsec) == pn)
-        rd = dun['doors'][room]
-        okk = (rd >= 0) & (jnp.arange(NS) < n) & (hnode(dun, room, dun['dsec'][room]) == pn)
-        S0 = side[jnp.where(jnp.any(okk), jnp.argmax(okk), 0)]
+        rd = dun.doors[room]
+        okk = (rd >= 0) & (jnp.arange(NS) < n) & (hnode(dun, room, dun.door_sec[room]) == pn)
+        k0 = jnp.where(jnp.any(okk), jnp.argmax(okk), 0); door0, nrm0 = sides.door[k0], sides.normal[k0]
         place0 = inroom & ~here
-        hx = jnp.where(place0, S0[6]-S0[2]*34, hx); hy = jnp.where(place0, S0[7]-S0[3]*34, hy)
+        hx = jnp.where(place0, door0[0]-nrm0[0]*HUNTER_DOOR_INSET, hx); hy = jnp.where(place0, door0[1]-nrm0[1]*HUNTER_DOOR_INSET, hy)
         here = here | place0
         chase = inroom & here & ~arrive_here
         # JS: a hunter that just arrived also chases in following frames; on the arrival frame it only appears
-        dx, dy = s['x']-hx, s['y']-hy; dist = jnp.hypot(dx, dy)+1e-9; sp = H_SPEED + floor*H_SPF
+        dx, dy = P.x-hx, P.y-hy; dist = jnp.hypot(dx, dy)+1e-9; sp = HUNTER_SPEED + floor*HUNTER_SPEED_PER_FLOOR
         nx_, ny_ = hx+dx/dist*sp*dt, hy+dy/dist*sp*dt
-        nx_, ny_ = push_all_obs(nx_, ny_, H_R, obs, ot); nx_, ny_ = push_inside(nx_, ny_, H_R, side, n)
+        nx_, ny_ = push_all_obs(nx_, ny_, HUNTER_R, ob); nx_, ny_ = push_inside(nx_, ny_, HUNTER_R, sides, n)
         hx = jnp.where(chase, nx_, hx); hy = jnp.where(chase, ny_, hy)
-        touch = chase & (dist < H_R+PR)
-        s = {**s, 'hdead': hd2, 'hflash': hf, 'htimer': jnp.where(respawn, 8., tm),
-             'hroom': jnp.where(respawn, newr, hroom), 'hsec': jnp.where(respawn, newsec, hsec),
-             'hhere': jnp.where(respawn, False, here), 'hx': hx, 'hy': hy,
-             'hhp': jnp.where(respawn, H_HP, s['hhp'])}
-        s['shake'] = arrive_here
+        touch = chase & (dist < HUNTER_R+PLAYER_R)
+        s = s.replace(hunter=Hunter(room=jnp.where(respawn, newr, hroom), sec=jnp.where(respawn, newsec, hsec),
+                                    timer=jnp.where(respawn, HUNTER_RESPAWN_DELAY, tm), here=jnp.where(respawn, False, here), x=hx, y=hy,
+                                    hp=jnp.where(respawn, HUNTER_HP, H.hp), dead=hd2, flash=hf),
+                      ev=s.ev.replace(shake=arrive_here))
         return cnd(touch, hurt, s)
 
     # ---------------- the step ----------------
     def step(s, action, dt=1/60.):
-        room = s['room']
-        floor = s['dun']['floor']
-        s = {**s, 'took': jnp.int32(0), 'newroom': jnp.int32(0), 'killed': jnp.int32(0), 'hit_hunter': jnp.int32(0), 'descended': False, 'healed': jnp.int32(0), 'opened': jnp.int32(0)}
-        n = s['dun']['n'][room]; side = s['dun']['side'][room]; doors = s['dun']['doors'][room]
-        obs, ot = room_obs(s, room)
-        s['inv'] = s['inv']-dt
+        room = s.room
+        s = s.replace(ev=_no_events(s.ev.shake))
+        n = s.dun.n[room]; sides = s.dun.sides[room]; doors = s.dun.doors[room]
+        ob = room_obs(s, room)
+        s = s.replace(player=s.player.replace(inv=s.player.inv-dt))
         s = hunter_tick(s, dt)
         # ---- movement
         mv = jnp.clip(action[:2], -1, 1); ml = jnp.hypot(mv[0], mv[1]); mv = jnp.where(ml > 1, mv/ml, mv)
-        mx, my = rot_inv(mv[0], mv[1], s['va'], s['mir'])
-        x, y = s['x']+mx*PSPEED*dt, s['y']+my*PSPEED*dt
-        x, y = push_all_obs(x, y, PR, obs, ot)
-        x, y, ex = clamp_player(x, y, side, n, doors)
-        s_move = {**s, 'x': x, 'y': y}
+        mx, my = rot_inv(mv[0], mv[1], s.view_angle, s.mirror)
+        x, y = s.player.x+mx*PLAYER_SPEED*dt, s.player.y+my*PLAYER_SPEED*dt
+        x, y = push_all_obs(x, y, PLAYER_R, ob)
+        x, y, ex = clamp_player(x, y, sides, n, doors)
+        s_move = s.replace(player=s.player.replace(x=x, y=y))
         s_tr = transit(s_move, jnp.maximum(ex, 0))
         # ---- rest of the frame (only if we did not just change room)
         s2 = combat(s_move, action, dt)
-        sel = lambda a, b: jnp.where(ex >= 0, a, b)
-        s = {k: (s_tr[k] if k == 'dun' else jax.tree_util.tree_map(sel, s_tr[k], s2[k])) for k in s_tr}
-        s['t'] = s['t']+dt; s['steps'] = s['steps']+1
+        s = struct.where(ex >= 0, s_tr.replace(dun=None), s2.replace(dun=None)).replace(dun=s_tr.dun)
+        s = s.replace(t=s.t+dt, steps=s.steps+1)
         # ---- reward / done
-        reward = (R_KILL*s['killed'] + R_HIT*s['took'] + R_ROOM*s['newroom'] + R_HUNTER*s['hit_hunter']*0
-                  + R_HEAL*s['healed'] + R_GATE*s['opened'] + R_DESCEND*s['descended'] + jnp.where(s['hp'] <= 0, R_DEATH, 0.))
-        done = s['hp'] <= 0                          # the run ends only on death; stairs are reported as `descended`
-        s['done'] = done
-        return s, reward, done
+        ev = s.ev
+        reward = (R_KILL*ev.killed + R_HIT*ev.took + R_ROOM*ev.newroom
+                  + R_HEAL*ev.healed + R_GATE*ev.opened + R_DESCEND*ev.descended + jnp.where(s.player.hp <= 0, R_DEATH, 0.))
+        done = s.player.hp <= 0                      # the run ends only on death; stairs are reported as `descended`
+        return s.replace(done=done), reward, done
 
     def combat(s, action, dt):
-        room = s['room']; floor = jnp.minimum(s['dun']['floor'], FLOOR_CAP).astype(jnp.float32)
-        n = s['dun']['n'][room]; side = s['dun']['side'][room]
-        obs, ot = room_obs(s, room)
-        x, y = s['x'], s['y']
+        room = s.room; dun = s.dun; floor = jnp.minimum(dun.floor, FLOOR_CAP).astype(jnp.float32)
+        n = dun.n[room]; sides = dun.sides[room]
+        ob = room_obs(s, room)
+        P = s.player; H = s.hunter; x, y = P.x, P.y
         # ---- aim / fire
-        ax, ay = rot_inv(action[2], action[3], s['va'], s['mir'])
-        firing = jnp.hypot(action[2], action[3]) > .25
-        aim = jnp.where(firing, jnp.arctan2(ay, ax), s['aim'])
-        fire = s['fire']-dt
+        ax, ay = rot_inv(action[2], action[3], s.view_angle, s.mirror)
+        firing = jnp.hypot(action[2], action[3]) > AIM_DEADZONE
+        aim = jnp.where(firing, jnp.arctan2(ay, ax), P.aim)
+        fire = P.fire-dt
         shoot = firing & (fire <= 0)
         fire = jnp.where(shoot, FIRE_DELAY, fire)
-        pb = s['pb']; free = jnp.argmin(pb[:, 5]); can = shoot & (pb[free, 5] < .5)
-        newb = jnp.array([x+jnp.cos(aim)*14, y+jnp.sin(aim)*14, jnp.cos(aim)*BSPEED, jnp.sin(aim)*BSPEED, BLIFE, 1.])
-        newb = jnp.stack([x+jnp.cos(aim)*14, y+jnp.sin(aim)*14, jnp.cos(aim)*BSPEED, jnp.sin(aim)*BSPEED, jnp.full_like(x, BLIFE), jnp.ones_like(x)])
-        pb = jnp.where(can, pb.at[free].set(newb), pb)
+        pb = s.pb; free = jnp.argmin(pb.alive); can = shoot & ~pb.alive[free]
+        newb = Bullets(x=x+jnp.cos(aim)*BULLET_MUZZLE, y=y+jnp.sin(aim)*BULLET_MUZZLE, vx=jnp.cos(aim)*BULLET_SPEED, vy=jnp.sin(aim)*BULLET_SPEED,
+                       life=BULLET_LIFE, alive=True)
+        pb = struct.where(can, _put(pb, free, newb), pb)
         # ---- player bullets: move, die on walls/obstacles
-        alive = pb[:, 5] > .5
-        bx, by = pb[:, 0]+pb[:, 2]*dt, pb[:, 1]+pb[:, 3]*dt; life = pb[:, 4]-dt
-        wall = ~jax.vmap(lambda a, b: inside_poly(side, n, a, b, 0.))(bx, by)
-        ob = jax.vmap(lambda a, b: hits_obs(a, b, 3., obs, ot))(bx, by)
-        alive = alive & (life > 0) & ~wall & ~ob
+        alive = pb.alive
+        bx, by = pb.x+pb.vx*dt, pb.y+pb.vy*dt; life = pb.life-dt
+        wall = ~jax.vmap(lambda a, b: inside_poly(sides, n, a, b, 0.))(bx, by)
+        obh = jax.vmap(lambda a, b: hits_obs(a, b, BULLET_R, ob))(bx, by)
+        alive = alive & (life > 0) & ~wall & ~obh
         # ---- vs enemies
-        en = s['en'][room]
-        ealive = en[:, 7] > .5; er = jnp.where(en[:, 3] > .5, 14., 12.); vuln = ealive & (en[:, 5] <= 0)
-        dist = jnp.hypot(bx[:, None]-en[None, :, 0], by[:, None]-en[None, :, 1])
-        hit = (dist < er[None, :]+3) & vuln[None, :] & alive[:, None]
+        en = s.enemies[room]
+        ealive = en.alive; er = jnp.where(en.shooter, SHOOTER_R, CHASER_R); vuln = ealive & (en.telegraph <= 0)
+        dist = jnp.hypot(bx[:, None]-en.x[None, :], by[:, None]-en.y[None, :])
+        hit = (dist < er[None, :]+BULLET_R) & vuln[None, :] & alive[:, None]
         first = jnp.argmax(hit, axis=1); anyh = jnp.any(hit, axis=1)
         onehot = jax.nn.one_hot(first, NE)*anyh[:, None]
         dmg = onehot.sum(0)
         alive = alive & ~anyh
         # ---- vs hunter
-        hdist = jnp.hypot(bx-s['hx'], by-s['hy'])
-        hvuln = s['hhere'] & (s['hroom'] == room) & (s['hdead'] <= 0)
-        hh = (hdist < H_R+3) & alive & hvuln
-        hfirst = jnp.argmax(hh) ; hany = jnp.any(hh)
+        hdist = jnp.hypot(bx-H.x, by-H.y)
+        hvuln = H.here & (H.room == room) & (H.dead <= 0)
+        hh = (hdist < HUNTER_R+BULLET_R) & alive & hvuln
+        hfirst = jnp.argmax(hh); hany = jnp.any(hh)
         hh1 = jax.nn.one_hot(hfirst, NB)*hany
         hdmg = jnp.sum(hh1)
         alive = alive & ~(hh1 > .5)
-        hhp = s['hhp']-hdmg; hkill = hvuln & (hhp <= 0) & (hdmg > 0)
-        pb = jnp.stack([bx, by, pb[:, 2], pb[:, 3], life, alive.astype(jnp.float32)], 1)
-        ehp = en[:, 2]-dmg; ekill = ealive & (ehp <= 0) & (dmg > 0)
-        flash = jnp.where(dmg > 0, .1, jnp.maximum(en[:, 6]-dt, 0.))
+        hhp = H.hp-hdmg; hkill = hvuln & (hhp <= 0) & (hdmg > 0)
+        pb = Bullets(x=bx, y=by, vx=pb.vx, vy=pb.vy, life=life, alive=alive)
+        ehp = en.hp-dmg; ekill = ealive & (ehp <= 0) & (dmg > 0)
+        flash = jnp.where(dmg > 0, HIT_FLASH, jnp.maximum(en.flash-dt, 0.))
         # ---- enemies move
-        spawning = ealive & (en[:, 5] > 0)
-        px_, py_ = x, y
-        edx, edy = px_-en[:, 0], py_-en[:, 1]; ed = jnp.hypot(edx, edy)+1e-9
-        shooter = en[:, 3] > .5
-        spc = 70+floor*7
+        spawning = ealive & (en.telegraph > 0)
+        edx, edy = x-en.x, y-en.y; ed = jnp.hypot(edx, edy)+1e-9
+        shooter = en.shooter
+        spc = CHASER_SPEED+floor*CHASER_SPEED_PER_FLOOR
         cdx, cdy = edx/ed*spc, edy/ed*spc
-        sp = 55.
-        retreat = ed < 230; approach = ed > 340
-        sdx = jnp.where(retreat, -edx/ed*sp, jnp.where(approach, edx/ed*sp, -edy/ed*sp*.6))
-        sdy = jnp.where(retreat, -edy/ed*sp, jnp.where(approach, edy/ed*sp, edx/ed*sp*.6))
+        sp = SHOOTER_SPEED
+        retreat = ed < SHOOTER_RETREAT; approach = ed > SHOOTER_APPROACH
+        sdx = jnp.where(retreat, -edx/ed*sp, jnp.where(approach, edx/ed*sp, -edy/ed*sp*SHOOTER_STRAFE))
+        sdy = jnp.where(retreat, -edy/ed*sp, jnp.where(approach, edy/ed*sp, edx/ed*sp*SHOOTER_STRAFE))
         vx_ = jnp.where(shooter, sdx, cdx); vy_ = jnp.where(shooter, sdy, cdy)
         act = ealive & ~ekill & ~spawning
-        nx = en[:, 0]+jnp.where(act, vx_*dt, 0.); ny = en[:, 1]+jnp.where(act, vy_*dt, 0.)
+        nx = en.x+jnp.where(act, vx_*dt, 0.); ny = en.y+jnp.where(act, vy_*dt, 0.)
         def fix(a, b, r):
-            a, b = push_all_obs(a, b, r, obs, ot); return push_inside(a, b, r, side, n)
+            a, b = push_all_obs(a, b, r, ob); return push_inside(a, b, r, sides, n)
         nx2, ny2 = jax.vmap(fix)(nx, ny, er)
         nx = jnp.where(act, nx2, nx); ny = jnp.where(act, ny2, ny)
-        contact = jnp.any(act & (ed < er+PR))
+        contact = jnp.any(act & (ed < er+PLAYER_R))
         # separation
         ddx, ddy = nx[None, :]-nx[:, None], ny[None, :]-ny[:, None]; dd = jnp.hypot(ddx, ddy)
         m = er[:, None]+er[None, :]
         pair = (dd > 0) & (dd < m) & act[:, None] & act[None, :] & ~jnp.eye(NE, dtype=bool)
         kk = jnp.where(pair, (m-dd)/2/jnp.maximum(dd, 1e-9), 0.)
-        nx = nx - (ddx*kk).sum(1) + 0.0; ny = ny - (ddy*kk).sum(1) + 0.0
+        nx = nx - (ddx*kk).sum(1); ny = ny - (ddy*kk).sum(1)
         # shooters fire
-        efire = en[:, 4]-jnp.where(act & shooter, dt, 0.)
+        efire = en.fire-jnp.where(act & shooter, dt, 0.)
         wantf = act & shooter & (efire <= 0)
-        k, key = jax.random.split(s['key']); key, kd = jax.random.split(key)
-        efire = jnp.where(wantf, 1.6+jax.random.uniform(k, (NE,))*.9, efire)
-        eb = s['eb']
+        k, key = jax.random.split(s.key); key, kd = jax.random.split(key)
+        efire = jnp.where(wantf, SHOOTER_RELOAD+jax.random.uniform(k, (NE,))*SHOOTER_RELOAD_RAND, efire)
         def place(i, eb):
-            f = jnp.argmin(eb[:, 5]); ok = wantf[i] & (eb[f, 5] < .5)
-            nb_ = jnp.stack([en[i, 0], en[i, 1], edx[i]/ed[i]*190, edy[i]/ed[i]*190, jnp.float32(3.), jnp.float32(1.)])
-            return jnp.where(ok, eb.at[f].set(nb_), eb)
-        eb = lax.fori_loop(0, NE, place, eb)
-        espawn = jnp.where(spawning, en[:, 5]-dt, en[:, 5])
-        newalive = ealive & ~ekill
-        en_new = jnp.stack([nx, ny, ehp, en[:, 3], efire, jnp.maximum(espawn, 0.), flash, newalive.astype(jnp.float32)], 1)
+            f = jnp.argmin(eb.alive); ok = wantf[i] & ~eb.alive[f]
+            new = Bullets(x=en.x[i], y=en.y[i], vx=edx[i]/ed[i]*ENEMY_BULLET_SPEED, vy=edy[i]/ed[i]*ENEMY_BULLET_SPEED, life=ENEMY_BULLET_LIFE, alive=True)
+            return struct.where(ok, _put(eb, f, new), eb)
+        eb = lax.fori_loop(0, NE, place, s.eb)
+        espawn = jnp.where(spawning, en.telegraph-dt, en.telegraph)
+        en_new = Enemies(x=nx, y=ny, hp=ehp, shooter=en.shooter, fire=efire, telegraph=jnp.maximum(espawn, 0.), flash=flash, alive=ealive & ~ekill)
         # ---- enemy bullets
-        ealive_b = eb[:, 5] > .5
-        ex_, ey_ = eb[:, 0]+eb[:, 2]*dt, eb[:, 1]+eb[:, 3]*dt; elife = eb[:, 4]-dt
-        ewall = ~jax.vmap(lambda a, b: inside_poly(side, n, a, b, 0.))(ex_, ey_)
-        eob = jax.vmap(lambda a, b: hits_obs(a, b, 4., obs, ot))(ex_, ey_)
-        ealive_b = ealive_b & (elife > 0) & ~ewall & ~eob
-        ehit = ealive_b & (jnp.hypot(ex_-px_, ey_-py_) < PR+4)
-        ealive_b = ealive_b & ~ehit
-        eb = jnp.stack([ex_, ey_, eb[:, 2], eb[:, 3], elife, ealive_b.astype(jnp.float32)], 1)
+        bx, by = eb.x+eb.vx*dt, eb.y+eb.vy*dt; elife = eb.life-dt
+        ewall = ~jax.vmap(lambda a, b: inside_poly(sides, n, a, b, 0.))(bx, by)
+        eob = jax.vmap(lambda a, b: hits_obs(a, b, ENEMY_BULLET_R, ob))(bx, by)
+        balive = eb.alive & (elife > 0) & ~ewall & ~eob
+        ehit = balive & (jnp.hypot(bx-x, by-y) < PLAYER_R+ENEMY_BULLET_R)
+        eb = Bullets(x=bx, y=by, vx=eb.vx, vy=eb.vy, life=elife, alive=balive & ~ehit)
         # ---- apply
-        s = {**s, 'aim': aim, 'fire': fire, 'pb': pb, 'eb': eb, 'key': key, 'en': s['en'].at[room].set(en_new),
-             'kills': s['kills']+jnp.sum(ekill).astype(jnp.int32)+5*hkill.astype(jnp.int32), 'killed': jnp.sum(ekill).astype(jnp.int32),
-             'hit_hunter': hany.astype(jnp.int32), 'hhp': jnp.where(hkill, H_HP, hhp),
-             'hdead': jnp.where(hkill, H_RESPAWN, s['hdead']), 'hhere': jnp.where(hkill, False, s['hhere'])}
+        nkill = jnp.sum(ekill).astype(jnp.int32)
+        s = s.replace(player=P.replace(aim=aim, fire=fire), pb=pb, eb=eb, key=key, enemies=_set_room(s.enemies, room, en_new),
+                      kills=s.kills+nkill+HUNTER_KILL_BONUS*hkill.astype(jnp.int32),
+                      hunter=H.replace(hp=jnp.where(hkill, HUNTER_HP, hhp), dead=jnp.where(hkill, HUNTER_RESPAWN, H.dead), here=jnp.where(hkill, False, H.here)),
+                      ev=s.ev.replace(killed=nkill, hit_hunter=hany.astype(jnp.int32)))
         s = cnd(contact | jnp.any(ehit), hurt, s)
         # ---- health pickups: enemies sometimes drop one where they die; walk over one to heal
-        drop = ekill & (jax.random.uniform(kd, (NE,)) < difficulty(s['dun']['floor'])['drop_p'])
+        drop = ekill & (jax.random.uniform(kd, (NE,)) < difficulty(dun.floor)['drop_p'])
         def put_pk(i, pk):
-            f = jnp.argmin(pk[:, 2]); ok = drop[i] & (pk[f, 2] < .5)
-            return jnp.where(ok, pk.at[f].set(jnp.stack([en[i, 0], en[i, 1], jnp.float32(1.)])), pk)
-        pk = lax.fori_loop(0, NE, put_pk, s['pk'][room])
+            f = jnp.argmin(pk.alive); ok = drop[i] & ~pk.alive[f]
+            return struct.where(ok, _put(pk, f, Pickups(x=en.x[i], y=en.y[i], alive=True)), pk)
+        pk = lax.fori_loop(0, NE, put_pk, s.pickups[room])
         def take(i, c):
             pk, hp, got = c
-            near = (pk[i, 2] > .5) & (jnp.hypot(pk[i, 0]-px_, pk[i, 1]-py_) < PICKUP_R) & (hp < MAXHP)
-            return jnp.where(near, pk.at[i, 2].set(0.), pk), hp+near.astype(jnp.int32), got+near.astype(jnp.int32)
-        pk, hp, got = lax.fori_loop(0, NPK, take, (pk, s['hp'], jnp.int32(0)))
-        s = {**s, 'pk': s['pk'].at[room].set(pk), 'hp': hp, 'healed': got}
+            near = pk.alive[i] & (jnp.hypot(pk.x[i]-x, pk.y[i]-y) < PICKUP_R) & (hp < MAX_HP)
+            return pk.replace(alive=jnp.where(near, pk.alive.at[i].set(False), pk.alive)), hp+near.astype(jnp.int32), got+near.astype(jnp.int32)
+        pk, hp, got = lax.fori_loop(0, NPK, take, (pk, s.player.hp, jnp.int32(0)))
+        s = s.replace(pickups=_set_room(s.pickups, room, pk), player=s.player.replace(hp=hp), ev=s.ev.replace(healed=got))
         # ---- exit pad
-        pad = s['dun']['pad'][room]
-        cleared = ~jnp.any(en_new[:, 7] > .5)
+        pad = dun.pad[room]
+        cleared = ~jnp.any(en_new.alive)
         # ---- a gated wall opens once your side is clear
-        psec = sec_point(s['dun'], room, px_, py_)
-        gate = (s['dun']['wkind'][room] == 2) & ~s['wopen'][room] & cleared & s['spawned'][room, psec]
-        wopen = s['wopen'].at[room].set(s['wopen'][room] | gate)
-        spawned = jnp.where(gate, s['spawned'].at[room].set(True), s['spawned'])
-        same = (sec_point(s['dun'], room, pad[0], pad[1]) == psec) | wopen[room]
-        s = {**s, 'wopen': wopen, 'spawned': spawned, 'opened': gate.astype(jnp.int32)}
-        s['descended'] = (room == s['dun']['exit']) & cleared & (jnp.hypot(px_-pad[0], py_-pad[1]) < 26) & same
-        return s
-
-    # ---------------- observation (egocentric, screen frame, no map) ----------------
-    OBS_SIDES, OBS_EN, OBS_EB = NS, 8, 8
-    obs_dim = 8 + NS*8 + OBS_EN*5 + OBS_EB*4 + 8 + 3 + 7
-    def observe(s):
-        room = s['room']; n = s['dun']['n'][room]; side = s['dun']['side'][room]; doors = s['dun']['doors'][room]
-        va, mir = s['va'], s['mir']; sc = 1/300.
-        x, y = s['x']-CX, s['y']-CY
-        vx, vy = view_vec(va, mir, x, y)
-        dun = s['dun']; pn = hnode(dun, room, sec_point(dun, room, s['x'], s['y'])); hn = hnode(dun, s['hroom'], s['hsec'])
-        hd_ = dun['ndist'][hn, pn]
-        hdist = jnp.where(s['hdead'] > 0, -1., jnp.where(hd_ >= 999, -2., hd_.astype(jnp.float32)))     # -1 down, -2 cut off by a wall
-        head = jnp.stack([vx*sc, vy*sc, s['hp']/MAXHP, (s['inv'] > 0).astype(jnp.float32), n/12., mir, jnp.clip(hdist, -2, 12)/12., jnp.minimum(s['dun']['floor'], FLOOR_CAP)/FLOOR_CAP])
-        # sides: valid, outward normal (screen), door, signed dist of player, hunter-arrival door
-        nxs, nys = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(side[:, 2], side[:, 3])
-        dpl = ((s['x']-side[:, 0])*side[:, 2] + (s['y']-side[:, 1])*side[:, 3])*sc
-        lat = ((side[:, 6]-side[:, 0])*side[:, 4] + (side[:, 7]-side[:, 1])*side[:, 5])*sc
-        valid = (jnp.arange(NS) < n).astype(jnp.float32)
-        warn = (jnp.arange(NS) == _hunter_door(s)).astype(jnp.float32)
-        sf = jnp.stack([valid, nxs*valid, nys*valid, (doors >= 0)*valid, dpl*valid, lat*valid, warn*valid, (dun['dsec'][room] > 0)*valid*(dun['wkind'][room] > 0)], 1)
-        en = s['en'][room]; alive = en[:, 7] > .5
-        rx, ry = en[:, 0]-s['x'], en[:, 1]-s['y']
-        ex_, ey_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(rx, ry)
-        dist = jnp.where(alive, jnp.hypot(rx, ry), 1e9); order = jnp.argsort(dist)[:OBS_EN]
-        ef = jnp.stack([alive[order], ex_[order]*sc*alive[order], ey_[order]*sc*alive[order], en[order, 3], en[order, 2]/4.*alive[order]], 1)
-        eb = s['eb']; balive = eb[:, 5] > .5
-        brx, bry = eb[:, 0]-s['x'], eb[:, 1]-s['y']
-        bx_, by_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(brx, bry)
-        bvx, bvy = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(eb[:, 2], eb[:, 3])
-        bd = jnp.where(balive, jnp.hypot(brx, bry), 1e9); bo = jnp.argsort(bd)[:OBS_EB]
-        bf = jnp.stack([bx_[bo]*sc*balive[bo], by_[bo]*sc*balive[bo], bvx[bo]/190.*balive[bo], bvy[bo]/190.*balive[bo]], 1)
-        # hunter + exit
-        hrx, hry = view_vec(va, mir, s['hx']-s['x'], s['hy']-s['y'])
-        hv = (s['hroom'] == room) & s['hhere'] & (s['hdead'] <= 0)
-        pad = s['dun']['pad'][room]; prx, pry = view_vec(va, mir, pad[0]-s['x'], pad[1]-s['y'])
-        isx = room == s['dun']['exit']
-        tail = jnp.stack([hv*1., hv*hrx*sc, hv*hry*sc, hv*s['hhp']/H_HP, isx*1., isx*prx*sc, isx*pry*sc, (~jnp.any(alive))*1.])
-        pk = s['pk'][room]; pa = pk[:, 2] > .5
-        pdist = jnp.where(pa, jnp.hypot(pk[:, 0]-s['x'], pk[:, 1]-s['y']), 1e9); pi_ = jnp.argmin(pdist)
-        prx2, pry2 = view_vec(va, mir, pk[pi_, 0]-s['x'], pk[pi_, 1]-s['y']); pany = jnp.any(pa)
-        ptail = jnp.stack([pany*1., pany*prx2*sc, pany*pry2*sc])
-        # inner wall: present, gated, open, its normal on screen, your signed distance to it, your side
-        ax = dun['wax'][room]; hasw = ax > 0; wnx, wny = view_vec(va, mir, (ax == 2)*1., (ax == 1)*1.)
-        wd = jnp.where(ax == 1, s['y'], s['x'])-dun['wpos'][room]
-        psec = sec_point(dun, room, s['x'], s['y']).astype(jnp.float32)
-        wtail = jnp.stack([hasw*1., (dun['wkind'][room] == 2)*1., s['wopen'][room]*1., hasw*wnx, hasw*wny, hasw*wd*sc, hasw*psec])
-        return jnp.concatenate([head, sf.reshape(-1), ef.reshape(-1), bf.reshape(-1), tail, ptail, wtail])
-
-    def hunter_dist(s):
-        """doors between you and the Hunter in section space: 0 same section, -1 down, -2 cut off by a wall"""
-        dun = s['dun']; room = s['room']
-        pn = hnode(dun, room, sec_point(dun, room, s['x'], s['y'])); hn = hnode(dun, s['hroom'], s['hsec']); d = dun['ndist'][hn, pn]
-        return jnp.where(s['hdead'] > 0, -1, jnp.where(d >= 999, -2, d)).astype(jnp.int32)
-
-    def _hunter_door(s):
-        """side of your room through which the Hunter would come (it is one door-step away from your section), else -1"""
-        room = s['room']; dun = s['dun']; hr = s['hroom']
-        pn = hnode(dun, room, sec_point(dun, room, s['x'], s['y'])); hn = hnode(dun, hr, s['hsec'])
-        doors = dun['doors'][hr]; arrk = dun['arr'][hr]
-        ok = (doors == room) & (hnode(dun, hr, dun['dsec'][hr]) == hn) & (hnode(dun, room, dun['dsec'][room, arrk]) == pn)
-        k = jnp.argmax(ok)
-        return jnp.where((hn != pn) & (s['hdead'] <= 0) & jnp.any(ok), arrk[k], -1)
+        psec = sec_point(dun, room, x, y)
+        gate = (dun.wall_kind[room] == WALL_GATED) & ~s.wall_open[room] & cleared & s.spawned[room, psec]
+        wopen = s.wall_open.at[room].set(s.wall_open[room] | gate)
+        spawned = jnp.where(gate, s.spawned.at[room].set(True), s.spawned)
+        same = (sec_point(dun, room, pad[0], pad[1]) == psec) | wopen[room]
+        descended = (room == dun.exit) & cleared & (jnp.hypot(x-pad[0], y-pad[1]) < PAD_R) & same
+        return s.replace(wall_open=wopen, spawned=spawned, ev=s.ev.replace(opened=gate.astype(jnp.int32), descended=descended))
 
     def next_state(s, key, done, desc):
         """what follows a finished step: death starts a new run at floor 1; stairs continue the run one floor deeper
         (hp +1, kills / time carried over)."""
-        floor = jnp.where(done, 1, s['dun']['floor']+1)
+        floor = jnp.where(done, 1, s.dun.floor+1)
         n = reset(key, floor)
         keep = desc & ~done
-        return {**n, 'hp': jnp.where(keep, jnp.minimum(MAXHP, s['hp']+1), n['hp']), 'kills': jnp.where(keep, s['kills'], 0),
-                'steps': jnp.where(keep, s['steps'], 0), 't': jnp.where(keep, s['t'], 0.)}
+        return n.replace(player=n.player.replace(hp=jnp.where(keep, jnp.minimum(MAX_HP, s.player.hp+1), n.player.hp)),
+                         kills=jnp.where(keep, s.kills, 0), steps=jnp.where(keep, s.steps, 0), t=jnp.where(keep, s.t, 0.))
+
+    def _info(s, desc):
+        return dict(descended=desc, floor=s.dun.floor, kills=s.kills, hp=s.player.hp, t=s.t)
 
     def step_auto(s, action, key, dt=1/60.):
         """one game, never ends: dies -> new run, reaches the stairs -> next floor. Returns (state, reward, done, info)"""
         s2, r, done = step(s, action, dt)
-        desc = s2['descended'] & ~done
-        info = dict(descended=desc, floor=s2['dun']['floor'], kills=s2['kills'], hp=s2['hp'], t=s2['t'])
+        desc = s2.ev.descended & ~done
         s3 = lax.cond(done | desc, lambda s_: next_state(s_, key, done, desc), lambda s_: s_, s2)
-        return s3, r, done, info
+        return s3, r, done, _info(s2, desc)
 
     def step_auto_batch(S, actions, key, dt=1/60.):
         """Batched step with auto-reset/advance. New dungeons are generated only when some game finished or
         took the stairs (one real lax.cond, outside vmap), then merged into those games."""
         S2, r, done = jax.vmap(lambda s, a: step(s, a, dt))(S, actions)
         B = done.shape[0]
-        desc = S2['descended'] & ~done
-        info = dict(descended=desc, floor=S2['dun']['floor'], kills=S2['kills'], hp=S2['hp'], t=S2['t'])
+        desc = S2.ev.descended & ~done
         keys = jax.random.split(key, B)
         regen = lambda S2: regen_where(S2, done | desc, lambda row, i: next_state(row, keys[i], done[i], desc[i]))
-        return lax.cond(jnp.any(done | desc), regen, lambda S2: S2, S2), r, done, info
+        return lax.cond(jnp.any(done | desc), regen, lambda S2: S2, S2), r, done, _info(S2, desc)
 
-    return dict(reset_batch=lambda keys, floors: cvmap(reset)(keys, floors), reset=reset, step=step, hunter_door=_hunter_door, hunter_dist=hunter_dist, next_state=next_state, step_auto=step_auto, step_auto_batch=step_auto_batch, observe=observe, obs_dim=obs_dim, transit=transit)
+    return dict(reset_batch=lambda keys, floors: cvmap(reset)(keys, floors), reset=reset, step=step, hunter_door=hunter_door,
+                hunter_dist=hunter_dist, next_state=next_state, step_auto=step_auto, step_auto_batch=step_auto_batch, observe=observe,
+                obs_dim=OBS_DIM, transit=transit)

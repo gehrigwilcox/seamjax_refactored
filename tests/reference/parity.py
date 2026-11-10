@@ -9,11 +9,11 @@ P['spawn_ok']=jnp.zeros_like(P['spawn_ok'])
 E=make_env(pool_source(P)); D=json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'pool.json')))
 @jax.jit
 def run(d, acts):
-    s=E['reset'](jax.random.PRNGKey(0),1,d); s={**s,'hdead':jnp.float64(1e9)}
+    s=E['reset'](jax.random.PRNGKey(0),1,d); s=s.replace(hunter=s.hunter.replace(dead=jnp.float64(1e9)))
     def body(s,a):
-        s={**s,'inv':jnp.float64(1.),'hp':jnp.int32(5)}
+        s=s.replace(player=s.player.replace(inv=jnp.float64(1.),hp=jnp.int32(5)))
         s,_,_=E['step'](s,a)
-        return s,jnp.stack([s['room'].astype(jnp.float64),s['x'],s['y'],s['va'],s['mir']])
+        return s,jnp.stack([s.room.astype(jnp.float64),s.player.x,s.player.y,s.view_angle,s.mirror])
     _,tr=lax.scan(body,s,acts); return tr
 tot=0; bad=0; maxpos=0; maxva=0; mirbad=0; div=[]
 for di,d in enumerate(D):

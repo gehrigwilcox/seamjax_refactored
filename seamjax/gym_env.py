@@ -26,6 +26,7 @@ from gymnasium.vector import VectorEnv, AutoresetMode
 from seamjax.specs import load_specs
 from seamjax.gen import gen_source
 from seamjax.env import make_env, regen_where
+from seamjax.core import struct
 from seamjax.render import render
 
 _CACHE = {}
@@ -39,24 +40,24 @@ def _core(frame_skip):
         def body(c, _):
             s, rew, stop = c
             s2, r, d = step(s, a)
-            stop2 = stop | d | s2['descended']
-            keep = {k: jnp.where(stop, s[k], s2[k]) for k in s if k != 'dun'}      # (dun never changes within a step)
-            return ({**keep, 'dun': s['dun']}, rew + jnp.where(stop, 0., r), stop2), None
+            stop2 = stop | d | s2.ev.descended
+            keep = struct.where(stop, s.replace(dun=None), s2.replace(dun=None))      # (dun never changes within a step)
+            return (keep.replace(dun=s.dun), rew + jnp.where(stop, 0., r), stop2), None
         (s, rew, _), _ = lax.scan(body, (s, jnp.float32(0.), jnp.bool_(False)), None, length=frame_skip)
         return s, rew
 
     def one(s, a, key):
         s, rew = frames(s, a)
-        done = s['hp'] <= 0; desc = s['descended'] & ~done
-        info = dict(descended=desc, floor=s['dun']['floor'], kills=s['kills'], hp=s['hp'], t=s['t'])
+        done = s.player.hp <= 0; desc = s.ev.descended & ~done
+        info = dict(descended=desc, floor=s.dun.floor, kills=s.kills, hp=s.player.hp, t=s.t)
         s = lax.cond(desc, lambda s_: E['next_state'](s_, key, jnp.bool_(False), jnp.bool_(True)), lambda s_: s_, s)
         return s, rew, done, info
 
     def batch(S, A, key):
         B = A.shape[0]
         S2, rew = jax.vmap(frames)(S, A)
-        done = S2['hp'] <= 0; desc = S2['descended'] & ~done
-        info = dict(descended=desc, floor=S2['dun']['floor'], kills=S2['kills'], hp=S2['hp'], t=S2['t'])
+        done = S2.player.hp <= 0; desc = S2.ev.descended & ~done
+        info = dict(descended=desc, floor=S2.dun.floor, kills=S2.kills, hp=S2.player.hp, t=S2.t)
         keys = jax.random.split(key, B)
         regen = lambda S2: regen_where(S2, done | desc, lambda row, i: next_state(row, keys[i], done[i], desc[i]))
         return lax.cond(jnp.any(done | desc), regen, lambda x: x, S2), rew, done, info
@@ -88,7 +89,7 @@ class SeamEnv(gym.Env):
         if seed is not None or self.s is None: self._key = jax.random.PRNGKey(0 if seed is None else seed)
         self._key, k = jax.random.split(self._key)
         self.s = self.C['reset'](k, (options or {}).get('floor', self.start_floor)); self.n = 0
-        return self._obs(), dict(floor=int(self.s['dun']['floor']))
+        return self._obs(), dict(floor=int(self.s.dun.floor))
 
     def step(self, action):
         self._key, k = jax.random.split(self._key)
@@ -126,8 +127,7 @@ class SeamVectorEnv(VectorEnv):
         obs = np.array(self.C['obs_b'](S))
         if trunc.any():       # time limit: start a new run for those too
             fresh = self.C['reset_b'](jax.random.split(k, self.num_envs), jnp.full(self.num_envs, self.start_floor))
-            m = jnp.asarray(trunc & ~done)
-            S = jax.tree_util.tree_map(lambda a, b: jnp.where(m.reshape((-1,)+(1,)*(a.ndim-1)), b, a), S, fresh)
+            S = struct.where(jnp.asarray(trunc & ~done), fresh, S)
         if over.any():
             info['final_obs'] = obs.copy(); info['_final_obs'] = over     # observation before the reset (valid where over)
         self.S = S; self.n[over] = 0
