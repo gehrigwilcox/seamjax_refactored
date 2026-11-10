@@ -16,7 +16,7 @@ for env, want in [({}, '<unset>'), ({'SEAM_BACKEND': 'cpu'}, 'cpu'), ({'SEAM_BAC
     assert rc == 0 and out[0] == want, (env, out, err[-300:])
 rc, out, err = run('import sys; sys.modules["seamjax"] = type(sys)("seamjax"); sys.modules["seamjax"].__path__ = [os.path.join(os.environ["PYTHONPATH"], "seamjax")]\nimport seamjax.backend as b; b.apply_env()', SEAM_BACKEND='bogus')
 assert rc != 0 and 'must be one of' in err, err[-300:]
-# the CPU always works and reports itself; the float64 table build always has a device that can do float64
+# the CPU always works and reports itself; the float64 table build runs on the CPU
 rc, out, err = run('import seamjax, seamjax.backend as b; i = b.ensure(); print(i["platform"], b.table_device().platform)', SEAM_BACKEND='cpu'); assert rc == 0 and out[0] == 'cpu cpu', (out, err[-300:])
 # a platform that is not installed: explicit -> clear error with the extra to install; auto pick that fails -> falls back to the CPU with a note
 import importlib.metadata as md

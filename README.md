@@ -28,11 +28,11 @@ Pick at most one GPU extra (they pin different JAX versions, so they cannot be i
 to the CPU and says why. To force one: `uv run seam --device cpu|cuda|rocm|metal` or `SEAM_BACKEND=...` (this also works for the Gymnasium
 environments and the tests); an explicit choice that cannot start stops with the extra to install. Setting `JAX_PLATFORMS` yourself is respected.
 
-Metal has no float64, so the one-off tiling build (which uses float64) runs on the CPU there and the results are moved to the GPU; everything
-else (generation, simulation, RL) runs on the GPU. The ROCm and Metal paths could not be run by me (no such hardware here): CUDA and the
-selection logic are tested only on CPU, so treat all three GPU backends as untested until you try them.
+The one-off tiling build (a sequential float64 loop: ~4 s on a CPU, ~2 min on a consumer NVIDIA GPU, impossible on Metal) runs on the CPU
+and its results are moved to the GPU; everything else (generation, simulation, RL) runs on the GPU. CUDA is tested (GTX 1660 SUPER, CUDA 13:
+all tests pass). ROCm and Metal could not be run here (no such hardware), so treat those two as untested until you try them.
 
-The tiling tables are built on the device by a jitted program the first time you run anything (a few seconds) and cached in `seamjax/data/`.
+The tiling tables are built on the CPU by a jitted program the first time you run anything (a few seconds) and cached in `seamjax/data/`.
 See `DESIGN.md` for the design document (vision, requirements, difficulty curve).
 
 ## Layout

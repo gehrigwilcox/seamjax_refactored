@@ -159,7 +159,7 @@ def build_specs(device=None):
     """grow every tiling patch and close every corner loop, on the device (or on `device`). Returns (tables, metadata)."""
     from seamjax.backend import table_device
     E, meta = encode()
-    with jax.default_device(device or table_device()), jax.enable_x64(True):               # float64: on the CPU if the device (Metal) has none
+    with jax.default_device(device or table_device()), jax.enable_x64(True):               # float64, on the CPU (see backend.table_device)
         out = jax.jit(lambda E: lax.map(_build_one, E))({k: jnp.asarray(v) for k, v in E.items()})
         out = {k: np.asarray(v) for k, v in out.items()}
     assert not out['overflow'].any(), 'a corner loop is longer than L'

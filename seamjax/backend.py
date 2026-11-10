@@ -9,7 +9,7 @@ By default it is automatic:
 Override with  SEAM_BACKEND=cpu|cuda|rocm|metal  (or `seam --device ...`).  An explicit choice that cannot start is an error that says
 which extra to install.  Setting JAX_PLATFORMS yourself always wins in `auto` mode.
 
-The one-off float64 tiling build needs float64, which Metal does not have; table_device() sends it to the CPU in that case.
+The one-off tiling build (float64, sequential) runs on the CPU on every backend; see table_device().
 """
 import os, sys
 import importlib.metadata as md
@@ -88,10 +88,9 @@ def describe():
 
 
 def table_device():
-    """device for the one-off float64 tiling build: the default device if it can compute in float64 (CPU, CUDA, ROCm), else the CPU (Metal)"""
-    import jax, jax.numpy as jnp
+    """device for the one-off tiling build: always the CPU. The build is a long sequential loop in float64, which GPUs run slowly
+    (consumer NVIDIA cards do float64 at 1/32 speed: ~2 min on a GTX 1660 against ~4 s on the CPU) or not at all (Metal).
+    Its result is cached on disk and moved to the GPU; generation, simulation and RL all run on the GPU."""
+    import jax
     ensure()
-    try:
-        with jax.enable_x64(True): jax.block_until_ready(jnp.arange(4, dtype=jnp.float64)*2)
-        return jax.devices()[0]
-    except Exception: return jax.devices('cpu')[0]
+    return jax.devices('cpu')[0]
