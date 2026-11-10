@@ -1,7 +1,7 @@
 """Run every test script and print a summary. usage: python tests/run_all.py"""
 import os, subprocess, sys, time
 here = os.path.dirname(os.path.abspath(__file__))
-names = ['regen_test.py', 'specs_test.py', 'gen_test.py', 'gen_loops.py', 'spawn_test.py', 'wall_test.py', 'hunter_test.py', 'difficulty_test.py', 'gym_test.py', 'gl_test.py', 'audio_test.py', 'minimap_test.py', 'backend_test.py']
+names = ['golden_test.py', 'regen_test.py', 'specs_test.py', 'gen_test.py', 'gen_loops.py', 'spawn_test.py', 'wall_test.py', 'hunter_test.py', 'difficulty_test.py', 'gym_test.py', 'gl_test.py', 'audio_test.py', 'minimap_test.py', 'backend_test.py']
 res = []
 for n in names:
     if not os.path.exists(os.path.join(here, n)): continue
