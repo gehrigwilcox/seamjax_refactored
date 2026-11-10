@@ -299,7 +299,7 @@ def gen_dungeon(SP, key, floor):
                    category=SP['cat'][sid]+0*sid, spec=sid, holonomy=SP['hol'][sid], dist=dist.astype(jnp.int32), node_dist=ndist.astype(jnp.int32))
 
 def gen_source(SP):
-    """source(key, floor, idx=None) for make_env: a fresh GPU-generated dungeon for that floor"""
+    """source(key, floor, idx=None) for sim.game.Game: a fresh GPU-generated dungeon for that floor"""
     def src(key, floor, idx=None):
         return gen_dungeon(SP, key, floor)
     return src

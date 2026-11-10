@@ -1,12 +1,13 @@
 import _setup
 """Functional checks of the wall logic in the JAX env: gate opens on clear, solid never, blocking, per-section spawn, exit rule."""
 import numpy as np, jax, jax.numpy as jnp
-from seamjax.env import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
 from seamjax.gen import *
 from seamjax.core.config import *
-SP=load_specs(); E=make_env(gen_source(SP))
-B=64; S=jax.jit(jax.vmap(E['reset']))(jax.random.split(jax.random.PRNGKey(11),B), jnp.full(B,8))
-step=jax.jit(E['step']); trans=jax.jit(E['transit'])
+SP=load_specs(); E=Game(gen_source(SP))
+B=64; S=jax.jit(jax.vmap(E.reset))(jax.random.split(jax.random.PRNGKey(11),B), jnp.full(B,8))
+step=jax.jit(E.step); trans=jax.jit((lambda s_,k_: _transit(s_, no_events(), k_)[0]))
 res=dict(gated=0,gate_opened=0,solid=0,solid_closed=0,blocked=0,blocked_n=0,spawn_only_own=0,spawn_n=0,reward_gate=0,exit_same_sec=0,exit_n=0)
 for i in range(B):
     s=S[i]; d=s.dun; wk=np.array(d.wall_kind); wax=np.array(d.wall_axis); wp=np.array(d.wall_pos); ds=np.array(d.door_sec); dn=np.array(d.doors)
@@ -27,7 +28,7 @@ for i in range(B):
             res['spawn_n']+=1; res['spawn_only_own']+=int(own)
             # clear the room, step once
             s2=s1.replace(enemies=s1.enemies.replace(alive=s1.enemies.alive.at[r].set(False)),player=s1.player.replace(inv=jnp.float32(5.)),hunter=s1.hunter.replace(dead=jnp.float32(1e9)))
-            s3,rew,_=step(s2,jnp.zeros(4))
+            s3,rew,_,_=step(s2,jnp.zeros(4))
             if wk[r]==2:
                 res['gated']+=1; res['gate_opened']+=int(bool(s3.wall_open[r])); res['reward_gate']+=int(float(rew)>0.04)
             else:
@@ -40,7 +41,7 @@ for i in range(B):
                     wantx,wanty=(0.,1.) if wax[r]==1 else (1.,0.)
                     if sec==1: wantx,wanty=-wantx,-wanty
                     vx,vy=view_vec(s4.view_angle,s4.mirror,wantx,wanty)
-                    s4,_,_=step(s4.replace(player=s4.player.replace(inv=jnp.float32(5.)),hunter=s4.hunter.replace(dead=jnp.float32(1e9))),jnp.array([vx,vy,0.,0.]))
+                    s4,_,_,_=step(s4.replace(player=s4.player.replace(inv=jnp.float32(5.)),hunter=s4.hunter.replace(dead=jnp.float32(1e9))),jnp.array([vx,vy,0.,0.]))
                     if int(s4.room)!=r: break
                 if int(s4.room)==r:
                     res['blocked_n']+=1; res['blocked']+=int(int(sec_point(d,r,s4.player.x,s4.player.y))==sec)

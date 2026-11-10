@@ -2,13 +2,14 @@ import _setup
 import numpy as np, jax, jax.numpy as jnp
 jax.config.update('jax_enable_x64', False)
 from seamjax.gen import *
-from seamjax.env import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
 from seamjax.core.config import *
-SP=load_specs(); E=make_env(gen_source(SP))
+SP=load_specs(); E=Game(gen_source(SP))
 B=128
 keys=jax.random.split(jax.random.PRNGKey(5),B)
-reset=jax.jit(jax.vmap(E['reset'])); S=reset(keys, jnp.tile(jnp.arange(1,9),B//8))
-step=jax.jit(E['step'])
+reset=jax.jit(jax.vmap(E.reset)); S=reset(keys, jnp.tile(jnp.arange(1,9),B//8))
+step=jax.jit(E.step)
 def chain(dn,ar,fl,n,r,c):
     cr,cc,d,steps=r,c,1,[]
     for _ in range(12):
@@ -36,7 +37,7 @@ for i in range(B):
             for (rr,k) in ch:
                 assert int(s.room)==rr
                 dr,nr_=dun.sides.door[rr,k],dun.sides.normal[rr,k]; s=s.replace(player=s.player.replace(x=jnp.float32(dr[0]+nr_[0]*10),y=jnp.float32(dr[1]+nr_[1]*10)))
-                s,_,_=step(s,jnp.zeros(4))
+                s,_,_,_=step(s,jnp.zeros(4))
             t=float(s.view_angle)%TAU; t=min(t,TAU-t)*180/np.pi; want=float(dun.holonomy)%360; want=min(want,360-want)
             tested+=1
             ok=int(s.room)==r and float(s.mirror)==1 and abs(t-want)<1e-2

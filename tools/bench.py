@@ -3,19 +3,19 @@ usage: python tools/bench.py [batch sizes...]      (default 512; e.g. `python to
 import _path, sys
 import time, numpy as np, jax, jax.numpy as jnp
 from jax import lax
-from seamjax.env import make_env
-from seamjax.gen import gen_source, load_specs
+from seamjax.sim.game import Game
+from seamjax.sim.observe import observe
 from seamjax.backend import describe
 print('JAX backend:', describe())
-SP = load_specs(); E = make_env(gen_source(SP)); T = 300
-obs_f = jax.vmap(E['observe'])
+G = Game.generated(); T = 300
+obs_f = jax.vmap(observe)
 
 def bench(B):
-    state = E['reset_batch'](jax.random.split(jax.random.PRNGKey(1), B), jnp.full(B, 6))
+    state = G.reset_batch(jax.random.split(jax.random.PRNGKey(1), B), jnp.full(B, 6))
     def body(c, t):
         s, k = c; k, ka, kr = jax.random.split(k, 3)
         a = jax.random.uniform(ka, (B, 4), minval=-1, maxval=1)
-        s, r, d, _ = E['step_auto_batch'](s, a, kr)
+        s, r, d, _ = G.step_auto_batch(s, a, kr)
         o = obs_f(s)
         return (s, k), (r, d, jnp.isfinite(o).all(), s.player.hp.min(), s.player.x.min(), s.player.x.max())
     run = jax.jit(lambda s, k: lax.scan(body, (s, k), jnp.arange(T)))

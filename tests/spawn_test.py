@@ -1,13 +1,15 @@
 import _setup
 import numpy as np, jax, jax.numpy as jnp
-from seamjax.gen import *; from seamjax.env import *
+from seamjax.gen import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
 from seamjax.core.config import *
-SP=load_specs(); E=make_env(gen_source(SP))
-B=96; S=jax.jit(jax.vmap(E['reset']))(jax.random.split(jax.random.PRNGKey(7),B), jnp.tile(jnp.arange(1,9),B//8))
+SP=load_specs(); E=Game(gen_source(SP))
+B=96; S=jax.jit(jax.vmap(E.reset))(jax.random.split(jax.random.PRNGKey(7),B), jnp.tile(jnp.arange(1,9),B//8))
 @jax.jit
 def probe(s,r,k):
     s=s.replace(room=r,visited=jnp.zeros_like(s.visited),spawned=jnp.zeros_like(s.spawned),wall_open=jnp.zeros_like(s.wall_open))
-    s2=E['transit'](s,k); nr=s.dun.doors[r,k]
+    s2=(lambda s_,k_: _transit(s_, no_events(), k_)[0])(s,k); nr=s.dun.doors[r,k]
     en=s2.enemies[nr]; alive=en.alive
     d=jnp.hypot(en.x-s2.player.x,en.y-s2.player.y)
     area=s.dun.area[nr]; cap=jnp.maximum(1,jnp.round(area/AREA_PER_ENEMY).astype(jnp.int32))+(nr==s.dun.exit)

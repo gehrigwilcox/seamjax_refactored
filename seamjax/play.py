@@ -78,7 +78,8 @@ def main(argv=None):
     print('JAX backend: %s%s' % (describe(), ('  (%s)' % info['note']) if info['note'] else ''))
     from seamjax.specs import load_specs
     from seamjax.gen import gen_source
-    from seamjax.env import make_env
+    from seamjax.sim.game import Game
+    from seamjax.sim.queries import hunter_door as hdoor_f, hunter_dist as hdist_f
     from seamjax.core.config import CX, CY, DOOR_GAP as GAP, PLAYER_R as PR, MAX_HP as MAXHP, HUNTER_R as H_R, HUNTER_HP, CHASER_R, SHOOTER_R
     from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
     from seamjax.events import Events
@@ -88,15 +89,14 @@ def main(argv=None):
         audio = Audio()
         if not audio.ok: print('no sound device (%s); continuing without sound. --mute silences this.' % audio.err); audio = None
     SP = load_specs(); meta = json.load(open(os.path.join(os.path.dirname(__file__), 'data', 'specs.json')))
-    E = make_env(gen_source(SP))
-    reset = jax.jit(E['reset']); nxt = jax.jit(E['next_state'])
-    hdoor_f, hdist_f = E['hunter_door'], E['hunter_dist']
+    G = Game(gen_source(SP))
+    reset = jax.jit(G.reset); nxt = jax.jit(G.next_state)
 
     @jax.jit
     def advance(s, act, acc):
         """one 1/60 s step; acc = flags seen since the last snapshot (opened, died, stairs)"""
-        s, rew, done = E['step'](s, act)
-        return s, acc | jnp.stack([s.ev.opened > 0, done, s.ev.descended])
+        s, rew, done, ev = G.step(s, act)
+        return s, acc | jnp.stack([ev.opened > 0, done, ev.descended])
 
     @jax.jit
     def snapshot(s, acc):

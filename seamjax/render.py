@@ -5,7 +5,7 @@ obstacles, exit pad, enemies and the Hunter (kept upright), pickups, bullets, th
 Use it for pixel-observation agents or for looking at what the GPU simulation is doing.
 """
 import numpy as np, jax, jax.numpy as jnp
-from seamjax.env import room_obs, hunter_door, hunter_visible
+from seamjax.sim.queries import room_obs, hunter_door, hunter_visible
 from seamjax.core.geometry.view import view_vec, rot_inv
 from seamjax.core.config import CX, CY, VIEW_W as VW, VIEW_H as VH, DOOR_GAP as GAP, PLAYER_R as PR, MAX_SIDES as NS, MAX_PICKUPS as NPK, \
     MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB

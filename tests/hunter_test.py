@@ -1,15 +1,17 @@
 import _setup
 import numpy as np, jax, jax.numpy as jnp
 from jax import lax
-from seamjax.env import *; from seamjax.gen import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
+from seamjax.gen import *
 """The Hunter always takes the true shortest route through room-sections (solid walls separate, gated ones do not)."""
-SP=load_specs(); E=make_env(gen_source(SP)); B=48
-S0=jax.jit(jax.vmap(E['reset']))(jax.random.split(jax.random.PRNGKey(3),B), jnp.full(B,8))
+SP=load_specs(); E=Game(gen_source(SP)); B=48
+S0=jax.jit(jax.vmap(E.reset))(jax.random.split(jax.random.PRNGKey(3),B), jnp.full(B,8))
 @jax.jit
 def run(s):
     def body(s,_):
         s=s.replace(player=s.player.replace(inv=jnp.float32(1.),hp=jnp.int32(5)))
-        s,_,_=E['step'](s,jnp.zeros(4))
+        s,_,_,_=E.step(s,jnp.zeros(4))
         return s,(s.hunter.room,s.hunter.sec)
     s,(hr,hs)=lax.scan(body,s,None,length=60*90)
     return player_node(s),hr,hs,s.dun.node_dist,s.dun.wall_kind

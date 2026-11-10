@@ -23,47 +23,27 @@ from jax import lax
 import gymnasium as gym
 from gymnasium import spaces
 from gymnasium.vector import VectorEnv, AutoresetMode
-from seamjax.specs import load_specs
-from seamjax.gen import gen_source
-from seamjax.env import make_env, regen_where
 from seamjax.core import struct
+from seamjax.sim.game import Game, info as step_info
+from seamjax.sim.observe import observe, OBS_DIM
 from seamjax.render import render
 
 _CACHE = {}
 def _core(frame_skip):
     """one shared set of jitted functions per frame_skip (compiling takes a while, do it once)"""
     if frame_skip in _CACHE: return _CACHE[frame_skip]
-    E = make_env(gen_source(load_specs())); step = E['step']; next_state = E['next_state']
-
-    def frames(s, a):
-        """frame_skip frames; freezes at death or stairs so no reward leaks past them"""
-        def body(c, _):
-            s, rew, stop = c
-            s2, r, d = step(s, a)
-            stop2 = stop | d | s2.ev.descended
-            keep = struct.where(stop, s.replace(dun=None), s2.replace(dun=None))      # (dun never changes within a step)
-            return (keep.replace(dun=s.dun), rew + jnp.where(stop, 0., r), stop2), None
-        (s, rew, _), _ = lax.scan(body, (s, jnp.float32(0.), jnp.bool_(False)), None, length=frame_skip)
-        return s, rew
+    G = Game.generated()
 
     def one(s, a, key):
-        s, rew = frames(s, a)
-        done = s.player.hp <= 0; desc = s.ev.descended & ~done
-        info = dict(descended=desc, floor=s.dun.floor, kills=s.kills, hp=s.player.hp, t=s.t)
-        s = lax.cond(desc, lambda s_: E['next_state'](s_, key, jnp.bool_(False), jnp.bool_(True)), lambda s_: s_, s)
+        """frame_skip frames; the stairs continue the run, death ends the episode (reset() starts the next)"""
+        s, rew, done, desc = G.step_frames(s, a, frame_skip)
+        desc = desc & ~done
+        info = step_info(s, desc)
+        s = lax.cond(desc, lambda s_: G.next_state(s_, key, jnp.bool_(False), jnp.bool_(True)), lambda s_: s_, s)
         return s, rew, done, info
 
-    def batch(S, A, key):
-        B = A.shape[0]
-        S2, rew = jax.vmap(frames)(S, A)
-        done = S2.player.hp <= 0; desc = S2.ev.descended & ~done
-        info = dict(descended=desc, floor=S2.dun.floor, kills=S2.kills, hp=S2.player.hp, t=S2.t)
-        keys = jax.random.split(key, B)
-        regen = lambda S2: regen_where(S2, done | desc, lambda row, i: next_state(row, keys[i], done[i], desc[i]))
-        return lax.cond(jnp.any(done | desc), regen, lambda x: x, S2), rew, done, info
-
-    C = dict(E=E, reset=jax.jit(E['reset']), one=jax.jit(one), obs=jax.jit(E['observe']), batch=jax.jit(batch),
-             reset_b=jax.jit(E['reset_batch']), obs_b=jax.jit(jax.vmap(E['observe'])),
+    C = dict(reset=jax.jit(G.reset), one=jax.jit(one), obs=jax.jit(observe), batch=jax.jit(lambda S, A, k: G.step_auto_batch(S, A, k, frame_skip)),
+             reset_b=jax.jit(G.reset_batch), obs_b=jax.jit(jax.vmap(observe)),
              render=jax.jit(render, static_argnums=(1, 2)), render_b=jax.jit(jax.vmap(render, in_axes=(0, None, None)), static_argnums=(1, 2)))
     _CACHE[frame_skip] = C; return C
 
@@ -77,7 +57,7 @@ class SeamEnv(gym.Env):
         self.C = _core(frame_skip); self.max_steps = max_steps; self.start_floor = start_floor; self.obs_mode = obs_mode
         self.pixels = pixels; self.render_mode = render_mode
         self.action_space = spaces.Box(-1., 1., (4,), np.float32)
-        self.observation_space = _obs_space(obs_mode, pixels) or spaces.Box(-10., 10., (self.C['E']['obs_dim'],), np.float32)
+        self.observation_space = _obs_space(obs_mode, pixels) or spaces.Box(-10., 10., (OBS_DIM,), np.float32)
         self._key = jax.random.PRNGKey(0); self.s = None; self.n = 0
 
     def _obs(self):
@@ -106,7 +86,7 @@ class SeamVectorEnv(VectorEnv):
     metadata = {'autoreset_mode': AutoresetMode.SAME_STEP, 'render_modes': []}
     def __init__(self, num_envs=256, frame_skip=4, max_steps=5000, start_floor=1):
         self.C = _core(frame_skip); self.num_envs = num_envs; self.max_steps = max_steps; self.start_floor = start_floor
-        od = self.C['E']['obs_dim']
+        od = OBS_DIM
         self.single_action_space = spaces.Box(-1., 1., (4,), np.float32); self.single_observation_space = spaces.Box(-10., 10., (od,), np.float32)
         self.action_space = spaces.Box(-1., 1., (num_envs, 4), np.float32); self.observation_space = spaces.Box(-10., 10., (num_envs, od), np.float32)
         self._key = jax.random.PRNGKey(0); self.S = None; self.n = np.zeros(num_envs, np.int32)
@@ -119,7 +99,6 @@ class SeamVectorEnv(VectorEnv):
 
     def step(self, actions):
         self._key, k = jax.random.split(self._key)
-        before = self.S
         S, r, done, info = self.C['batch'](self.S, jnp.asarray(actions, jnp.float32), k)
         self.n += 1; trunc = self.n >= self.max_steps
         done = np.array(done); info = {k_: np.array(v) for k_, v in info.items()}

@@ -152,7 +152,7 @@ class Hunter:
 
 @pytree
 class StepEvents:
-    """what happened during the last step (zeroed at the start of every step)"""
+    """what happened during one step; returned by the step, not kept in the state"""
     took: object        # hits taken
     newroom: object     # entered a room for the first time
     killed: object      # enemies killed
@@ -181,6 +181,4 @@ class GameState:
     t: object           # seconds into the run
     steps: object
     kills: object
-    done: object
     key: object
-    ev: StepEvents

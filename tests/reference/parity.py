@@ -1,18 +1,19 @@
 import json, numpy as np, jax, jax.numpy as jnp
 jax.config.update('jax_enable_x64', True)
 import os, sys; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')); sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from seamjax.env import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
 from pool import load_pool, pool_source
 from jax import lax
 P=load_pool(); P={k:(v.astype(jnp.float64) if v.dtype==jnp.float32 else v) for k,v in P.items()}
 P['spawn_ok']=jnp.zeros_like(P['spawn_ok'])
-E=make_env(pool_source(P)); D=json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'pool.json')))
+E=Game(pool_source(P)); D=json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'pool.json')))
 @jax.jit
 def run(d, acts):
-    s=E['reset'](jax.random.PRNGKey(0),1,d); s=s.replace(hunter=s.hunter.replace(dead=jnp.float64(1e9)))
+    s=E.reset(jax.random.PRNGKey(0),1,d); s=s.replace(hunter=s.hunter.replace(dead=jnp.float64(1e9)))
     def body(s,a):
         s=s.replace(player=s.player.replace(inv=jnp.float64(1.),hp=jnp.int32(5)))
-        s,_,_=E['step'](s,a)
+        s,_,_,_=E.step(s,a)
         return s,jnp.stack([s.room.astype(jnp.float64),s.player.x,s.player.y,s.view_angle,s.mirror])
     _,tr=lax.scan(body,s,acts); return tr
 tot=0; bad=0; maxpos=0; maxva=0; mirbad=0; div=[]

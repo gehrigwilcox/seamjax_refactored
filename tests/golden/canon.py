@@ -16,12 +16,14 @@ DUNGEON_FLOORS = np.arange(1, 17, dtype=np.int32)
 # ---------------------------------------------------------------- adapters (the only layout-specific code)
 def api():
     from seamjax.specs import load_specs
-    from seamjax.gen import gen_source, gen_dungeon
-    from seamjax.env import make_env
+    from seamjax.gen import gen_dungeon
+    from seamjax.sim.game import Game
+    from seamjax.sim.observe import observe
+    from seamjax.sim.queries import hunter_door, hunter_dist
     SP = load_specs()
-    E = make_env(gen_source(SP))
-    return dict(SP=SP, gen=lambda k, f: gen_dungeon(SP, k, f), reset_batch=E['reset_batch'], step_batch=E['step_auto_batch'],
-                observe=E['observe'], hunter_door=E['hunter_door'], hunter_dist=E['hunter_dist'])
+    G = Game.generated(SP)
+    return dict(SP=SP, gen=lambda k, f: gen_dungeon(SP, k, f), reset_batch=G.reset_batch, step_batch=G.step_auto_batch,
+                observe=observe, hunter_door=hunter_door, hunter_dist=hunter_dist)
 
 
 def canon_dungeon(d):

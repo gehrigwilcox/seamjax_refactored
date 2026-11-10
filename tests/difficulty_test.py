@@ -1,9 +1,11 @@
 import _setup
 import numpy as np, jax, jax.numpy as jnp
-from seamjax.env import *; from seamjax.gen import *
+from seamjax.sim.game import Game; from seamjax.sim.queries import *; from seamjax.core.geometry.view import view_vec
+from seamjax.sim.state import no_events; from seamjax.sim.systems.transit import transit as _transit
+from seamjax.gen import *
 from seamjax.core.config import *
 """Difficulty rises smoothly with the floor, and taking the stairs continues the run (hp+1, kills kept, floor+1)."""
-SP = load_specs(); E = make_env(gen_source(SP)); B = 96
+SP = load_specs(); E = Game(gen_source(SP)); B = 96
 gen = jax.jit(jax.vmap(lambda k, f: gen_dungeon(SP, k, f)))
 rows = {}
 for f in (1, 2, 3, 5, 8, 14):
@@ -22,15 +24,15 @@ d = [difficulty(f) for f in (1, 4, 10, 40)]
 assert float(d[0]['shooter_p']) < float(d[1]['shooter_p']) < float(d[2]['shooter_p']) <= float(d[3]['shooter_p']) <= .45
 assert float(d[0]['hunter_first']) > float(d[2]['hunter_first']) >= float(d[3]['hunter_first'])
 # the stairs: put the player on the exit pad of a cleared exit room
-s = jax.jit(E['reset'])(jax.random.PRNGKey(4), 2)
+s = jax.jit(E.reset)(jax.random.PRNGKey(4), 2)
 dun = s.dun; ex = int(dun.exit); pad = np.array(dun.pad[ex])
 s = s.replace(room=jnp.int32(ex), player=s.player.replace(x=jnp.float32(pad[0]), y=jnp.float32(pad[1]), hp=jnp.int32(3), inv=jnp.float32(9.)), kills=jnp.int32(7),
               hunter=s.hunter.replace(dead=jnp.float32(1e9)), spawned=jnp.ones_like(s.spawned), wall_open=jnp.ones_like(s.wall_open) | (dun.wall_kind > 0))
-s2, r, done, info = jax.jit(E['step_auto'])(s, jnp.zeros(4), jax.random.PRNGKey(9))
+s2, r, done, info = jax.jit(E.step_auto)(s, jnp.zeros(4), jax.random.PRNGKey(9))
 print('after stairs: floor', int(s2.dun.floor), 'hp', int(s2.player.hp), 'kills', int(s2.kills), 'done', bool(done), 'reward', float(r))
 assert not bool(done) and bool(info['descended']) and int(s2.dun.floor) == 3 and int(s2.player.hp) == 4 and int(s2.kills) == 7 and float(r) >= R_DESCEND-.01
 # death starts a new run at floor 1
 s = s.replace(player=s.player.replace(hp=jnp.int32(0)))
-s3, r, done, info = jax.jit(E['step_auto'])(s, jnp.zeros(4), jax.random.PRNGKey(9))
+s3, r, done, info = jax.jit(E.step_auto)(s, jnp.zeros(4), jax.random.PRNGKey(9))
 assert bool(done) and int(s3.dun.floor) == 1 and int(s3.player.hp) == MAX_HP and int(s3.kills) == 0
 print('PASS')

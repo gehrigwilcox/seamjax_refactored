@@ -47,7 +47,12 @@ seamjax/            the game (everything needed to play or train)
     geometry/       collide.py (circles vs room walls and obstacles), view.py (view rotation / mirror, walking through a door)
   specs.py          catalogue of worlds + a JAX builder that grows each tiling and closes its corner loops -> constant tables
   gen.py            GPU dungeon generator: rooms, doors, loops, obstacles, inner walls, spawn points, exit
-  env.py            the simulation: movement, combat, Hunter, pickups, sections, view/mirror, observation
+  sim/              the simulation, pure functions of the state
+    game.py         Game: reset, next floor / new run, auto-resetting single and batched steps (also used by Gymnasium and the viewer)
+    step.py         one frame = the systems in order; returns the new state and what happened (StepEvents)
+    systems/        player, hunter, transit (doors), enemies, projectiles, pickups, rooms (gates, stairs)
+    queries.py      read-only questions: sections, Hunter nodes and distance, the door the Hunter comes through
+    reward.py, observe.py   RL reward and observation
   difficulty.py     the difficulty curve (one function of the floor)
   render.py         pure-JAX renderer (pixel observations)
   gym_env.py        Gymnasium: SeamEnv ("Seam-v0") and SeamVectorEnv
@@ -128,6 +133,9 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 ## Notes
 
 * Dungeons come only from `gen.py`, and the tilings it samples are built on the device by `specs.py`; nothing is exported from another program.
+* Using the simulation directly: `G = seamjax.Game.generated(); s = G.reset(key, floor); s, reward, done, ev = G.step(s, action)`;
+  `G.step_auto_batch(S, actions, key)` runs many games and replaces finished ones. A new mechanic is a new system in `sim/systems/`,
+  called from `sim/step.py`.
 * The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
   Change fields with `s.replace(...)`; index a whole pool or batch with `s.enemies[room]` / `S[i]`.
 * `tests/golden_test.py` records what the generator and the simulation produce and checks later code reproduces it bit for bit;
