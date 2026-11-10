@@ -16,7 +16,8 @@ fx.py turns game events (see app/events.py: a kill, a hit, a pickup...) into par
 import math, colorsys
 import numpy as np
 import moderngl
-from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R, CHASER_R, SHOOTER_R
+from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R
+from seamjax.core import kinds
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
 from seamjax.core.geometry.view import view_np
 
@@ -108,9 +109,9 @@ class GLView:
         pk = sn.pickups
         for i in np.where(pk.alive)[0]: add(M(pk.x[i], pk.y[i]), 11*(1+.08*math.sin(t*4+i)), 3, (1., .36, .45), 1.1, 40)
         for i in np.where(alive)[0]:
-            p = M(en.x[i], en.y[i]); sh = bool(en.shooter[i]); rad = SHOOTER_R if sh else CHASER_R; tg = float(en.telegraph[i])
+            p = M(en.x[i], en.y[i]); kind = kinds.ENEMY_KINDS[int(en.kind[i])]; rad = kind.radius; tg = float(en.telegraph[i])
             if tg > 0: add(p, rad+4*tg, 1, (1., 1., 1.), .8, rad*3+10, 0, 1.6)
-            else: add(p, rad, 0, (1., 1., 1.) if en.flash[i] > 0 else ((.71, .49, 1.) if sh else (1., .48, .27)), 1.)
+            else: add(p, rad, 0, (1., 1., 1.) if en.flash[i] > 0 else tuple(c/255. for c in kind.colour), 1.)
         for bl, rad, col, inten, ext, ln in ((sn.pb, 3, (1., .89, .48), 1.5, 40, 16.), (sn.eb, 4.5, (1., .54, .82), 1.4, 36, 10.)):
             for i in np.where(bl.alive)[0]:
                 vx, vy = view_np(va, mir, bl.vx[i], bl.vy[i]); add(M(bl.x[i], bl.y[i]), rad, 4, col, inten, ext, math.atan2(-vy, -vx), ln)

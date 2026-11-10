@@ -28,7 +28,7 @@ ob = Obstacles(kind=np.array([1, 0, -1, -1, -1, -1]), pos=np.array([[380, 330], 
 c = RoomDraw(n=n, sides=Sides(mid=mid, normal=nrm, tangent=tan, door=mid.copy()), doors=doors, corners=V, obstacles=ob, wall_axis=0, wall_kind=0,
              wall_pos=0., door_sec=np.zeros(n, int), pad=np.array([480., 300.]), spawn=np.zeros((16, 2)), spawn_ok=np.zeros(16, int),
              spawn_sec=np.zeros(16, int), hue=200.)
-en = pool(Enemies, 10, [dict(x=350, y=250, shooter=True, alive=True), dict(x=560, y=330, alive=True), dict(x=450, y=200, telegraph=.6, alive=True),
+en = pool(Enemies, 10, [dict(x=350, y=250, kind=1, alive=True), dict(x=560, y=330, alive=True), dict(x=450, y=200, telegraph=.6, alive=True),
                         dict(x=520, y=400, flash=1, alive=True)])
 pk = pool(Pickups, 6, [dict(x=400, y=380, alive=True)])
 pb = pool(Bullets, 24, [dict(x=430, y=290, vx=380, vy=20, life=1, alive=True)]); eb = pool(Bullets, 24, [dict(x=380, y=270, vx=100, vy=60, life=3, alive=True)])

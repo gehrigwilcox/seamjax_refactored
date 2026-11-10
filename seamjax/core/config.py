@@ -2,7 +2,7 @@
 Every game constant in one place: sizes, speeds, timings, reward weights, array capacities.
 
 Plain Python numbers, no JAX import, so the viewer, the OpenGL code and the tests can read them too. Things that change
-with the floor are not here but in difficulty.py.
+with the floor are not here but in difficulty.py; enemy kinds and the player's gun are in kinds.py.
 
 Coordinates: each room is drawn in its own frame of VIEW_W x VIEW_H logical pixels, y down, centred on (CX, CY).
 """
@@ -36,25 +36,10 @@ PLAYER_SPEED = 215.
 MAX_HP = 5
 INVULN = 1.                 # seconds of invulnerability after a hit
 AIM_DEADZONE = .25          # the gun fires while the aim stick is held further than this
-FIRE_DELAY = .14
-BULLET_SPEED = 520.
-BULLET_LIFE = .9
-BULLET_MUZZLE = 14.         # bullets start this far from the player's centre
-BULLET_R = 3.               # player bullet radius
 PICKUP_R = 20.              # walk this close to a health pickup to take it
 PAD_R = 26.                 # stand this close to the exit pad's centre to take the stairs
 
-# ---------------------------------------------------------------- enemies
-CHASER_R, SHOOTER_R = 12., 14.
-CHASER_HP, SHOOTER_HP = 3., 4.
-CHASER_SPEED, CHASER_SPEED_PER_FLOOR = 70., 7.
-SHOOTER_SPEED = 55.
-SHOOTER_RETREAT, SHOOTER_APPROACH = 230., 340.      # shooters back off closer than this, close in further than this, else strafe
-SHOOTER_STRAFE = .6
-SHOOTER_FIRST_SHOT, SHOOTER_FIRST_SHOT_RAND = 1., 1.5
-SHOOTER_RELOAD, SHOOTER_RELOAD_RAND = 1.6, .9
-ENEMY_BULLET_SPEED = 190.
-ENEMY_BULLET_LIFE = 3.
+# ---------------------------------------------------------------- enemies (what each kind is: core/kinds.py)
 ENEMY_BULLET_R = 4.
 HIT_FLASH = .1
 TELEGRAPH = 1.0             # seconds an enemy is shown before it becomes active

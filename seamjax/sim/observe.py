@@ -3,7 +3,7 @@ The RL observation: egocentric, in screen space (what you see, so a mirrored roo
 
     head (8)        your position, hp, invulnerable, sides of the room, view mirror, doors to the Hunter, floor
     sides (12 x 8)  valid, outward normal, has a door, your distance, door offset, Hunter arrives here, door on the wall's 2nd side
-    enemies (8 x 5) nearest first: present, position, shooter, hp
+    enemies (8 x 5) nearest first: present, position, ranged, hp
     bullets (8 x 4) nearest enemy bullets: position, velocity
     tail (8)        Hunter visible / position / hp, exit room / pad position, room cleared
     pickup (3)      nearest health pickup: present, position
@@ -16,6 +16,7 @@ from seamjax.core.types import AXIS_H, WALL_GATED
 from seamjax.core.geometry.view import view_vec
 from seamjax.core.geometry.collide import side_dist
 from seamjax.core.ops import argsort_small
+from seamjax.sim.systems.enemies import ranged
 from seamjax.sim.queries import hnode, player_node, hunter_door, hunter_visible, sec_point
 
 
@@ -41,7 +42,7 @@ def observe(s):
     rx, ry = en.x-P.x, en.y-P.y
     ex_, ey_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(rx, ry)
     dist = jnp.where(alive, jnp.hypot(rx, ry), 1e9); order = argsort_small(dist)[:OBS_EN]
-    ef = jnp.stack([alive[order], ex_[order]*sc*alive[order], ey_[order]*sc*alive[order], en.shooter[order], en.hp[order]/4.*alive[order]], 1)
+    ef = jnp.stack([alive[order], ex_[order]*sc*alive[order], ey_[order]*sc*alive[order], ranged(en)[order], en.hp[order]/4.*alive[order]], 1)
     eb = s.eb; balive = eb.alive
     brx, bry = eb.x-P.x, eb.y-P.y
     bx_, by_ = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(brx, bry)

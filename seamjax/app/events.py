@@ -2,7 +2,7 @@
 Game events for the viewer, found by comparing each snapshot with the previous one (the simulation itself stays pure and
 knows nothing about effects or sound).  Both the visual effects (gl/fx.py) and the sound (audio.Audio) consume these.
 
-An event is a dict: name, x, y (world position in the current room) and sometimes `shooter`.  Names:
+An event is a dict: name, x, y (world position in the current room) and, for a kill, `kind` (index into core/kinds.ENEMY_KINDS).  Names:
   shoot  hit  heal  kill  death  hunter_hit  hunter_die  open  descend  newrun
 """
 import math
@@ -23,11 +23,11 @@ class Events:
             if dead and not P['dead']: E('death')
             if opened: E('open')
             if P['key'] == key:
-                for i in np.where(P['alive'] & ~alive)[0]: E('kill', P['ex'][i], P['ey'][i], shooter=bool(P['eshooter'][i]))
+                for i in np.where(P['alive'] & ~alive)[0]: E('kill', P['ex'][i], P['ey'][i], kind=int(P['ekind'][i]))
                 hx, hy = float(sn.hunter.x), float(sn.hunter.y)
                 if hh < P['hh'] - .5 and bool(sn.hunter.here): E('hunter_hit', hx, hy)
                 if P['hal'] and not hal: E('hunter_die', hx, hy)
                 if nb > P['nb']: a = float(sn.player.aim); E('shoot', x+math.cos(a)*16, y+math.sin(a)*16)
         elif P is not None: E('newrun' if P['dead'] else 'descend')
-        self.prev = dict(key=key, gen=gen, ex=np.array(en.x), ey=np.array(en.y), eshooter=np.array(en.shooter), alive=alive, hp=hp, nb=nb, hh=hh, hal=hal, dead=dead)
+        self.prev = dict(key=key, gen=gen, ex=np.array(en.x), ey=np.array(en.y), ekind=np.array(en.kind), alive=alive, hp=hp, nb=nb, hh=hh, hal=hal, dead=dead)
         return ev

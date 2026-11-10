@@ -17,8 +17,8 @@ for n, v in L.items():
 from seamjax.core.types import Enemies
 from _fakes import pool, snapshot
 ev = Events()
-one = pool(Enemies, 10, [dict(x=100, y=100, shooter=True, alive=True)]); none_ = pool(Enemies, 10)
+one = pool(Enemies, 10, [dict(x=100, y=100, kind=1, alive=True)]); none_ = pool(Enemies, 10)
 assert ev.update(snapshot(enemies=one, player=dict(x=10., y=20., aim=0.)), (0, 0), 0, False) == []
-k = ev.update(snapshot(enemies=none_, player=dict(x=10., y=20., aim=0., hp=4)), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['shooter'], k
+k = ev.update(snapshot(enemies=none_, player=dict(x=10., y=20., aim=0., hp=4)), (0, 0), 0, False); assert [e['name'] for e in k] == ['hit', 'kill'] and k[1]['kind'] == 1, k
 assert [e['name'] for e in ev.update(snapshot(enemies=none_, player=dict(x=10., y=20., aim=0., hp=4)), (1, 5), 1, False)] == ['descend']
 print('events PASS\naudio PASS')

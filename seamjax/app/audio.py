@@ -11,6 +11,7 @@ import threading
 import numpy as np
 import jax, jax.numpy as jnp
 from jax import lax
+from seamjax.core import kinds
 
 SR = 22050; TAU = 2*np.pi; LOOP = 4.0; NVAR = 3
 
@@ -151,5 +152,5 @@ class Audio:
     def events(self, evs, pan_of):
         """evs from events.Events; pan_of(x, y) -> -1..1 (left..right on the screen)"""
         for e in evs:
-            n = e['name']; name = ('kill_shooter' if e['shooter'] else 'kill_charger') if n == 'kill' else self.MAP.get(n)
+            n = e['name']; name = kinds.ENEMY_KINDS[e['kind']].kill_sound if n == 'kill' else self.MAP.get(n)
             if name: self.play(name, pan_of(e['x'], e['y']) if n not in ('hit', 'death', 'descend', 'open') else 0., .6 if n == 'shoot' else 1.)

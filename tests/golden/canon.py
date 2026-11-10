@@ -54,7 +54,7 @@ def canon_state(s):
     xy = lambda p: jnp.stack([p.x, p.y], -1)
     out = canon_step(s)
     out.update(visited=s.visited, wopen=s.wall_open, spawned=s.spawned, key=s.key,
-               en_pos=xy(en), en_hp=en.hp, en_shooter=en.shooter, en_fire=en.fire, en_telegraph=en.telegraph,
+               en_pos=xy(en), en_hp=en.hp, en_shooter=jnp.asarray(_kinds().ranged)[en.kind], en_fire=en.fire, en_telegraph=en.telegraph,
                en_flash=en.flash, en_alive=en.alive,
                pb_pos=xy(pb), pb_vel=jnp.stack([pb.vx, pb.vy], -1), pb_life=pb.life, pb_alive=pb.alive,
                eb_pos=xy(eb), eb_vel=jnp.stack([eb.vx, eb.vy], -1), eb_life=eb.life, eb_alive=eb.alive,
@@ -63,6 +63,11 @@ def canon_state(s):
 
 
 def dungeon_of(s): return s.dun
+
+
+def _kinds():
+    from seamjax.core.kinds import table
+    return table()
 
 
 def keep_alive(s, on):

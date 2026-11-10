@@ -2,7 +2,8 @@
 import math
 import numpy as np
 import pygame
-from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, DOOR_GAP, PLAYER_R, HUNTER_R, CHASER_R, SHOOTER_R
+from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, DOOR_GAP, PLAYER_R, HUNTER_R
+from seamjax.core import kinds
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
 from seamjax.core.geometry.view import view_np
 from seamjax.app.minimap import hsl
@@ -45,9 +46,9 @@ def draw_room(screen, sn, room, M, t):
         x, y = M(pk.x[i], pk.y[i]); pygame.draw.circle(screen, (255, 92, 115), (int(x-3), int(y)), 5); pygame.draw.circle(screen, (255, 92, 115), (int(x+3), int(y)), 5)
         pygame.draw.polygon(screen, (255, 92, 115), [(x-8, y+1), (x+8, y+1), (x, y+11)])
     for i in np.where(alive)[0]:
-        x, y = M(en.x[i], en.y[i]); sh = bool(en.shooter[i]); rad = int(SHOOTER_R if sh else CHASER_R); tg = float(en.telegraph[i])
+        x, y = M(en.x[i], en.y[i]); kind = kinds.ENEMY_KINDS[int(en.kind[i])]; rad = int(kind.radius); tg = float(en.telegraph[i])
         if tg > 0: pygame.draw.circle(screen, (255, 255, 255), (int(x), int(y)), int(rad+4*tg), 1)
-        else: pygame.draw.circle(screen, (255, 255, 255) if en.flash[i] > 0 else ((180, 126, 255) if sh else (255, 122, 69)), (int(x), int(y)), rad)
+        else: pygame.draw.circle(screen, (255, 255, 255) if en.flash[i] > 0 else kind.colour, (int(x), int(y)), rad)
     for bl, col, rad in ((sn.pb, (255, 226, 122), 4), (sn.eb, (255, 138, 210), 5)):
         for i in np.where(bl.alive)[0]: pygame.draw.circle(screen, col, tuple(map(int, M(bl.x[i], bl.y[i]))), rad)
     # the Hunter, and you

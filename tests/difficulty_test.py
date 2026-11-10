@@ -21,7 +21,8 @@ assert rows[8]['hyper'] > .15 and rows[8]['sphere'] > .05 and rows[2]['hyper'] =
 # enemies per entry, hunter delay, shooter share go up with depth
 from seamjax.difficulty import difficulty
 d = [difficulty(f) for f in (1, 4, 10, 40)]
-assert float(d[0]['shooter_p']) < float(d[1]['shooter_p']) < float(d[2]['shooter_p']) <= float(d[3]['shooter_p']) <= .45
+sh = [float(x['enemy_mix'][1]) for x in d]                                   # kind 1: the shooter
+assert sh[0] < sh[1] < sh[2] <= sh[3] <= .45 and all(abs(float(x['enemy_mix'].sum())-1) < 1e-6 for x in d)
 assert float(d[0]['hunter_first']) > float(d[2]['hunter_first']) >= float(d[3]['hunter_first'])
 # the stairs: put the player on the exit pad of a cleared exit room
 s = jax.jit(E.reset)(jax.random.PRNGKey(4), 2)

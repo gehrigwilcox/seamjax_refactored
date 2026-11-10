@@ -9,6 +9,7 @@ Enemy count, enemy speed and Hunter speed keep climbing with the floor until FLO
 """
 import numpy as np
 import jax.numpy as jnp
+from seamjax.core import kinds
 
 FLOOR_CAP = 24                        # difficulty stops growing here; the run itself is endless
 
@@ -19,6 +20,13 @@ _CAT = np.array([[1., 0., 0., 0.],
                   [.25, .2, .2, .35],
                   [0., .4225, .2275, .35]], np.float32)
 
+def enemy_mix(f):
+    """share of each enemy kind among spawns at (capped, float) floor f: each kind's share rule, the rest to the kind without one"""
+    shares = [jnp.float32(0.) if k.share is None else jnp.clip(k.share[0]+k.share[1]*(f-1), k.share[2], k.share[3]) for k in kinds.ENEMY_KINDS]
+    rest = [i for i, k in enumerate(kinds.ENEMY_KINDS) if k.share is None]
+    p = jnp.stack(shares)
+    return p.at[rest[0]].set(1.-p.sum()) if rest else p
+
 def difficulty(floor):
     f = jnp.minimum(jnp.asarray(floor, jnp.float32), FLOOR_CAP)
     cat_p = jnp.stack([jnp.interp(f, _AF, _CAT[:, c]) for c in range(4)])
@@ -27,7 +35,7 @@ def difficulty(floor):
         cat_p=cat_p/cat_p.sum(),
         size=jnp.clip(.4+.12*(f-1), .4, 1.),                       # share of the full dungeon size
         wall_p=jnp.clip(.06*(f-1), 0., .3),                        # chance a room gets an inner wall
-        shooter_p=jnp.clip(.12+.03*(f-1), .12, .45),               # share of ranged enemies
+        enemy_mix=enemy_mix(f),                                     # share of each enemy kind (core/kinds.py): more shooters deeper down
         drop_p=jnp.clip(.14+.008*f, .14, .24),                     # health drop rate rises a little to offset the pressure
         hunter_first=jnp.clip(26.-3.*f, 10., 22.),                 # seconds before the Hunter first sets off
     )

@@ -1,8 +1,10 @@
 """Bullets: flying, and what they hit. The player's bullets hit enemies and the Hunter; enemy bullets hit the player."""
 import jax, jax.numpy as jnp
 from seamjax.core import pool
-from seamjax.core.config import (MAX_ENEMIES as NE, MAX_PLAYER_BULLETS as NB, BULLET_R, PLAYER_R, ENEMY_BULLET_R, CHASER_R, SHOOTER_R,
-                                 HIT_FLASH, HUNTER_R, HUNTER_HP, HUNTER_RESPAWN, HUNTER_KILL_BONUS)
+from seamjax.core.config import (MAX_ENEMIES as NE, MAX_PLAYER_BULLETS as NB, PLAYER_R, ENEMY_BULLET_R, HIT_FLASH, HUNTER_R, HUNTER_HP,
+                                 HUNTER_RESPAWN, HUNTER_KILL_BONUS)
+from seamjax.core.kinds import BLASTER
+from seamjax.sim.systems.enemies import radius
 from seamjax.core.geometry.collide import blocked
 from seamjax.sim.queries import room_geom
 
@@ -21,7 +23,7 @@ def player_bullet_hits(s, ev, dt):
     bx, by, alive = pb.x, pb.y, pb.alive
     # ---- vs enemies
     en = s.enemies[room]
-    ealive = en.alive; er = jnp.where(en.shooter, SHOOTER_R, CHASER_R); vuln = ealive & (en.telegraph <= 0)
+    ealive = en.alive; er = radius(en); vuln = ealive & (en.telegraph <= 0); BULLET_R = BLASTER.radius
     dist = jnp.hypot(bx[:, None]-en.x[None, :], by[:, None]-en.y[None, :])
     hit = (dist < er[None, :]+BULLET_R) & vuln[None, :] & alive[:, None]
     first = jnp.argmax(hit, axis=1); anyh = jnp.any(hit, axis=1)

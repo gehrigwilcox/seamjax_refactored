@@ -1,7 +1,8 @@
 """
 Enemies: spawning when you first enter a room-section, shooting, and moving. Only the current room's enemies act.
 
-Two kinds: chasers run straight at you; shooters keep their distance (back off, close in, or strafe) and fire.
+What an enemy is comes from its kind (core/kinds.py): radius, hp, speed, behaviour (CHASE runs straight at you, SKIRMISH keeps
+its distance: backs off, closes in, or strafes), and whether and how it shoots.
 An enemy is telegraphed for TELEGRAPH seconds after it spawns: shown, but it neither moves, shoots nor takes damage.
 """
 import jax, jax.numpy as jnp
@@ -9,17 +10,22 @@ from jax import lax
 from seamjax.difficulty import difficulty, FLOOR_CAP
 from seamjax.core import pool
 from seamjax.core.ops import argsort_small
-from seamjax.core.config import (MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, CHASER_R, SHOOTER_R, CHASER_HP, SHOOTER_HP, CHASER_SPEED,
-                                 CHASER_SPEED_PER_FLOOR, SHOOTER_SPEED, SHOOTER_RETREAT, SHOOTER_APPROACH, SHOOTER_STRAFE, SHOOTER_FIRST_SHOT,
-                                 SHOOTER_FIRST_SHOT_RAND, SHOOTER_RELOAD, SHOOTER_RELOAD_RAND, ENEMY_BULLET_SPEED, ENEMY_BULLET_LIFE,
-                                 TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX)
+from seamjax.core import kinds
+from seamjax.core.config import MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX
 from seamjax.core.types import Enemies, Bullets
 from seamjax.core.geometry.collide import push_out
 from seamjax.sim.queries import room_geom, eff_sec
 
 
+def of(name, kind):
+    """a column of the kind table (kinds.ENEMY_KINDS, read when the step is traced) for an array of kinds"""
+    return jnp.asarray(getattr(kinds.table(), name))[kind]
+
 def radius(en):
-    return jnp.where(en.shooter, SHOOTER_R, CHASER_R)
+    return of('radius', en.kind)
+
+def ranged(en):
+    return of('ranged', en.kind)
 
 def active(en):
     """alive and done being telegraphed"""
@@ -45,24 +51,27 @@ def spawn(s, key, sec):
     okp = mine & (dpl >= minD*.6)
     score = jax.random.uniform(k1, (N_SPAWN_POINTS,)) + jnp.where(dpl >= minD, 0., -5.) + jnp.where(okp, 0., -10.)
     order = argsort_small(-score)[:NE]
-    shooter = jax.random.uniform(k3, (NE,)) < difficulty(floor)['shooter_p']
-    new = Enemies(x=pts[order, 0], y=pts[order, 1], hp=jnp.where(shooter, SHOOTER_HP, CHASER_HP), shooter=shooter,
-                  fire=SHOOTER_FIRST_SHOT + jax.random.uniform(k4, (NE,))*SHOOTER_FIRST_SHOT_RAND, telegraph=jnp.full(NE, TELEGRAPH),
+    # kinds by the floor's mix: kind K-1 if u < p[K-1], else K-2 if u < p[K-1]+p[K-2], ... (one uniform draw per enemy)
+    mix = difficulty(floor)['enemy_mix']; thr = jnp.cumsum(mix[::-1])[:-1]
+    kind = (mix.shape[0]-1 - jnp.sum(jax.random.uniform(k3, (NE,))[:, None] >= thr[None, :], axis=1)).astype(jnp.int32)
+    new = Enemies(x=pts[order, 0], y=pts[order, 1], hp=of('hp', kind), kind=kind,
+                  fire=of('first_shot', kind) + jax.random.uniform(k4, (NE,))*of('first_shot_rand', kind), telegraph=jnp.full(NE, TELEGRAPH),
                   flash=jnp.zeros(NE), alive=okp[order] & (jnp.arange(NE) < cnt))
     rows = pool.fill(s.enemies[room], new)                           # into free slots: the other section's enemies stay
     return s.replace(enemies=pool.set_row(s.enemies, room, rows))
 
 
 def shoot(s, key, dt):
-    """shooters count down and fire at you"""
+    """ranged kinds count down and fire at you"""
     room = s.room; en = s.enemies[room]
-    act = active(en)
+    act = active(en); shoots = ranged(en)
     edx, edy = s.player.x-en.x, s.player.y-en.y; ed = jnp.hypot(edx, edy)+1e-9
-    efire = en.fire-jnp.where(act & en.shooter, dt, 0.)
-    wantf = act & en.shooter & (efire <= 0)
-    efire = jnp.where(wantf, SHOOTER_RELOAD+jax.random.uniform(key, (NE,))*SHOOTER_RELOAD_RAND, efire)
+    efire = en.fire-jnp.where(act & shoots, dt, 0.)
+    wantf = act & shoots & (efire <= 0)
+    efire = jnp.where(wantf, of('reload', en.kind)+jax.random.uniform(key, (NE,))*of('reload_rand', en.kind), efire)
+    bspeed, blife = of('bullet_speed', en.kind), of('bullet_life', en.kind)
     def place(i, eb):
-        new = Bullets(x=en.x[i], y=en.y[i], vx=edx[i]/ed[i]*ENEMY_BULLET_SPEED, vy=edy[i]/ed[i]*ENEMY_BULLET_SPEED, life=ENEMY_BULLET_LIFE, alive=True)
+        new = Bullets(x=en.x[i], y=en.y[i], vx=edx[i]/ed[i]*bspeed[i], vy=edy[i]/ed[i]*bspeed[i], life=blife[i], alive=True)
         return pool.spawn(eb, new, wantf[i])
     eb = lax.fori_loop(0, NE, place, s.eb)
     return s.replace(eb=eb, enemies=pool.set_row(s.enemies, room, en.replace(fire=efire)))
@@ -74,13 +83,15 @@ def move(s, dt):
     sides, n, ob = room_geom(s, room)
     act = active(en); spawning = en.alive & (en.telegraph > 0); er = radius(en)
     edx, edy = s.player.x-en.x, s.player.y-en.y; ed = jnp.hypot(edx, edy)+1e-9
-    spc = CHASER_SPEED+floor*CHASER_SPEED_PER_FLOOR
-    cdx, cdy = edx/ed*spc, edy/ed*spc
-    sp = SHOOTER_SPEED
-    retreat = ed < SHOOTER_RETREAT; approach = ed > SHOOTER_APPROACH
-    sdx = jnp.where(retreat, -edx/ed*sp, jnp.where(approach, edx/ed*sp, -edy/ed*sp*SHOOTER_STRAFE))
-    sdy = jnp.where(retreat, -edy/ed*sp, jnp.where(approach, edy/ed*sp, edx/ed*sp*SHOOTER_STRAFE))
-    vx_ = jnp.where(en.shooter, sdx, cdx); vy_ = jnp.where(en.shooter, sdy, cdy)
+    sp = of('speed', en.kind)+floor*of('speed_per_floor', en.kind)
+    # CHASE: straight at you
+    cdx, cdy = edx/ed*sp, edy/ed*sp
+    # SKIRMISH: back off when close, close in when far, else strafe round you
+    retreat = ed < of('retreat', en.kind); approach = ed > of('approach', en.kind); strafe = of('strafe', en.kind)
+    sdx = jnp.where(retreat, -edx/ed*sp, jnp.where(approach, edx/ed*sp, -edy/ed*sp*strafe))
+    sdy = jnp.where(retreat, -edy/ed*sp, jnp.where(approach, edy/ed*sp, edx/ed*sp*strafe))
+    skirmish = of('behaviour', en.kind) == kinds.SKIRMISH
+    vx_ = jnp.where(skirmish, sdx, cdx); vy_ = jnp.where(skirmish, sdy, cdy)
     nx = en.x+jnp.where(act, vx_*dt, 0.); ny = en.y+jnp.where(act, vy_*dt, 0.)
     nx2, ny2 = jax.vmap(lambda a, b, r: push_out(a, b, r, sides, n, ob))(nx, ny, er)
     nx = jnp.where(act, nx2, nx); ny = jnp.where(act, ny2, ny)

@@ -42,6 +42,7 @@ seamjax/            the game (everything needed to play or train)
   core/             the engine core, shared by generator, simulation and renderers
     types.py        typed state: Dungeon, GameState and the entity pools (Bullets, Enemies, Pickups, ...)
     config.py       every constant
+    kinds.py        enemy kinds as data (radius, hp, speed, behaviour, gun, spawn share, colour, sound) and the player's gun
     struct.py       @pytree dataclasses (replace, indexing, field-wise where)
     pool.py         fixed-capacity entity pools: first_free / spawn / fill
     ops.py          argsort_small: much faster than jnp.argsort for the tiny per-game arrays
@@ -146,6 +147,8 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 * Using the simulation directly: `G = seamjax.Game.generated(); s = G.reset(key, floor); s, reward, done, ev = G.step(s, action)`;
   `G.step_auto_batch(S, actions, key)` runs many games and replaces finished ones. A new mechanic is a new system in `sim/systems/`,
   called from `sim/step.py`.
+* Adding an enemy kind: one more `EnemyKind` row in `seamjax/core/kinds.py` (and, for a new way of moving, one more behaviour in
+  `sim/systems/enemies.py`). The simulation, observation, renderers and sound all read that table; `tests/kinds_test.py` adds one.
 * The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
   Change fields with `s.replace(...)`; index a whole pool or batch with `s.enemies[room]` / `S[i]`.
 * `tests/golden_test.py` records what the generator and the simulation produce and checks later code reproduces it bit for bit;

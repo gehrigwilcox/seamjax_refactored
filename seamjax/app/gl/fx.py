@@ -2,6 +2,7 @@
 import math
 import numpy as np
 from seamjax.app.gl.shaders import NPART
+from seamjax.core import kinds
 
 
 class Fx:
@@ -24,7 +25,7 @@ class Fx:
             elif n == 'heal': self.burst(p, 14, (1., .45, .6), 120, .7, 5, now)
             elif n == 'death': self.shake = 1.4; self.burst(p, 70, (1., .7, .75), 330, 1.1, 8, now)
             elif n == 'kill':
-                self.burst(p, 26, (.71, .49, 1.) if e['shooter'] else (1., .48, .27), 250, .65, 6, now); self.burst(p, 8, (1., 1., 1.), 160, .35, 4, now); self.shake = max(self.shake, .28)
+                self.burst(p, 26, tuple(c/255. for c in kinds.ENEMY_KINDS[e['kind']].colour), 250, .65, 6, now); self.burst(p, 8, (1., 1., 1.), 160, .35, 4, now); self.shake = max(self.shake, .28)
             elif n == 'hunter_hit': self.burst(p, 8, (1., .36, .45), 170, .4, 4, now)
             elif n == 'hunter_die': self.burst(p, 60, (1., .36, .45), 300, 1., 7, now); self.shake = max(self.shake, .8); self.flash = .6
             elif n == 'shoot': self.burst(p, 4, (1., .89, .48), 130, .22, 3, now, .6)

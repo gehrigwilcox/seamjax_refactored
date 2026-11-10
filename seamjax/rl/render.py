@@ -10,6 +10,7 @@ from seamjax.core.geometry.view import view_vec, rot_inv
 from seamjax.core.config import CX, CY, VIEW_W as VW, VIEW_H as VH, DOOR_GAP as GAP, PLAYER_R as PR, MAX_SIDES as NS, MAX_PICKUPS as NPK, \
     MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB
 from seamjax.core.types import OBST_CIRCLE, OBST_RECT, WALL_GATED
+from seamjax.sim.systems.enemies import radius, of
 
 def _hsl(h, s, l):
     c = (1-jnp.abs(2*l-1))*s; hp = (h % 360.)/60.; x = c*(1-jnp.abs(hp % 2-1)); m = l-c/2
@@ -28,7 +29,7 @@ def render(s, H=100, W=160):
     # sprites live in screen space (upright), so move their centers there once
     toscr = lambda x, y: tuple(jnp.array(view_vec(va, mir, x-CX, y-CY))+jnp.array([CX, CY]))
     en = s.enemies[room]; pk = s.pickups[room]
-    ex_, ey_ = jax.vmap(toscr)(en.x, en.y); er = jnp.where(en.shooter, 14., 12.)
+    ex_, ey_ = jax.vmap(toscr)(en.x, en.y); er = radius(en); ecol = of('colour', en.kind)
     bx_, by_ = jax.vmap(toscr)(s.pb.x, s.pb.y); ebx, eby = jax.vmap(toscr)(s.eb.x, s.eb.y)
     pkx, pky = jax.vmap(toscr)(pk.x, pk.y); plx, ply = toscr(s.player.x, s.player.y); hx, hy = toscr(s.hunter.x, s.hunter.y)
     padx, pady = toscr(dun.pad[room, 0], dun.pad[room, 1])
@@ -66,8 +67,7 @@ def render(s, H=100, W=160):
         # sprites (screen space)
         circ = lambda cx, cy, r: jnp.hypot(px-cx, py-cy) < r
         e_hit = jax.vmap(circ)(ex_, ey_, er) & en.alive
-        col = jnp.where(jnp.any(e_hit & ~en.shooter), jnp.array([1., .48, .27]), col)
-        col = jnp.where(jnp.any(e_hit & en.shooter), jnp.array([.71, .49, 1.]), col)
+        col = jnp.where(jnp.any(e_hit), ecol[jnp.argmax(e_hit)], col)                     # an enemy in its kind's colour
         col = jnp.where(jnp.any(jax.vmap(circ)(pkx, pky, jnp.full(NPK, 7.)) & pk.alive), jnp.array([1., .36, .45]), col)
         col = jnp.where(jnp.any(jax.vmap(circ)(bx_, by_, jnp.full(NB, 4.)) & s.pb.alive), jnp.array([1., .89, .48]), col)
         col = jnp.where(jnp.any(jax.vmap(circ)(ebx, eby, jnp.full(NEB, 5.)) & s.eb.alive), jnp.array([1., .54, .82]), col)

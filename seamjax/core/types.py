@@ -122,8 +122,8 @@ class Enemies:
     x: object
     y: object
     hp: object
-    shooter: object     # bool: ranged enemy (else a chaser)
-    fire: object        # time until a shooter fires
+    kind: object        # int: index into core/kinds.ENEMY_KINDS (what it is: radius, hp, speed, behaviour, gun)
+    fire: object        # time until it fires (ranged kinds)
     telegraph: object   # time until it becomes active (shown as a ring until then)
     flash: object       # hit-flash time left
     alive: object

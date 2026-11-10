@@ -15,7 +15,7 @@ def empty_bullets(n):
 
 def empty_enemies(R):
     z = jnp.zeros((R, NE)); b = jnp.zeros((R, NE), bool)
-    return Enemies(x=z, y=z, hp=z, shooter=b, fire=z, telegraph=z, flash=z, alive=b)
+    return Enemies(x=z, y=z, hp=z, kind=jnp.zeros((R, NE), jnp.int32), fire=z, telegraph=z, flash=z, alive=b)
 
 def no_events():
     i0 = jnp.int32(0)

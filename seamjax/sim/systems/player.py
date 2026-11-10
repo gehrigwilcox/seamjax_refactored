@@ -1,7 +1,8 @@
 """The player: walking (controls are in screen space, the room may be turned or mirrored) and the gun."""
 import jax.numpy as jnp
 from seamjax.core import pool
-from seamjax.core.config import (DOOR_GAP, PLAYER_R, PLAYER_SPEED, AIM_DEADZONE, FIRE_DELAY, BULLET_SPEED, BULLET_LIFE, BULLET_MUZZLE, BULLET_R)
+from seamjax.core.config import DOOR_GAP, PLAYER_R, PLAYER_SPEED, AIM_DEADZONE
+from seamjax.core.kinds import BLASTER
 from seamjax.core.types import Bullets
 from seamjax.core.geometry.view import rot_inv
 from seamjax.core.geometry.collide import push_out_obstacles, clamp_through_doors
@@ -22,16 +23,16 @@ def move(s, action, dt):
     return s.replace(player=s.player.replace(x=x, y=y)), ex
 
 
-def shoot(s, action, dt):
-    """aim with the aim stick; holding it fires (one bullet per FIRE_DELAY). Moves the player's bullets."""
+def shoot(s, action, dt, gun=BLASTER):
+    """aim with the aim stick; holding it fires (one bullet per gun.delay). Moves the player's bullets."""
     P = s.player
     ax, ay = rot_inv(action[2], action[3], s.view_angle, s.mirror)
     firing = jnp.hypot(action[2], action[3]) > AIM_DEADZONE
     aim = jnp.where(firing, jnp.arctan2(ay, ax), P.aim)
     fire = P.fire-dt
     shoot = firing & (fire <= 0)
-    fire = jnp.where(shoot, FIRE_DELAY, fire)
-    new = Bullets(x=P.x+jnp.cos(aim)*BULLET_MUZZLE, y=P.y+jnp.sin(aim)*BULLET_MUZZLE, vx=jnp.cos(aim)*BULLET_SPEED, vy=jnp.sin(aim)*BULLET_SPEED,
-                  life=BULLET_LIFE, alive=True)
-    pb = fly(pool.spawn(s.pb, new, shoot), dt, BULLET_R, *room_geom(s, s.room))
+    fire = jnp.where(shoot, gun.delay, fire)
+    new = Bullets(x=P.x+jnp.cos(aim)*gun.muzzle, y=P.y+jnp.sin(aim)*gun.muzzle, vx=jnp.cos(aim)*gun.speed, vy=jnp.sin(aim)*gun.speed,
+                  life=gun.life, alive=True)
+    pb = fly(pool.spawn(s.pb, new, shoot), dt, gun.radius, *room_geom(s, s.room))
     return s.replace(player=P.replace(aim=aim, fire=fire), pb=pb)
