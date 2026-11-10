@@ -39,7 +39,12 @@ See `DESIGN.md` for the design document (vision, requirements, difficulty curve)
 
 ```
 seamjax/            the game (everything needed to play or train)
-  core/             the data of the game: typed state (types.py), every constant (config.py), pytree dataclass helpers (struct.py)
+  core/             the engine core, shared by generator, simulation and renderers
+    types.py        typed state: Dungeon, GameState and the entity pools (Bullets, Enemies, Pickups, ...)
+    config.py       every constant
+    struct.py       @pytree dataclasses (replace, indexing, field-wise where)
+    pool.py         fixed-capacity entity pools: first_free / spawn / fill
+    geometry/       collide.py (circles vs room walls and obstacles), view.py (view rotation / mirror, walking through a door)
   specs.py          catalogue of worlds + a JAX builder that grows each tiling and closes its corner loops -> constant tables
   gen.py            GPU dungeon generator: rooms, doors, loops, obstacles, inner walls, spawn points, exit
   env.py            the simulation: movement, combat, Hunter, pickups, sections, view/mirror, observation
@@ -130,7 +135,8 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 * `tests/specs_test.py` checks the device-built tables against an independent numpy construction (`tests/reference/specs_numpy.py`).
 * `tests/reference/` records dungeons and scripted walks from the original JS game to check frame-for-frame agreement
   (`python tests/reference/export_pool.py path/to/index.html`, then `python tests/reference/parity.py`). Not needed to play or train.
-* Speed on a laptop CPU is about 60k simulation steps per second (batched); on a GPU much more.
+* Speed (batched, `python tools/bench.py 512 2048 8192`): about 60k simulation steps per second on a laptop CPU, about 330k on a GTX 1660 SUPER
+  (flat from 512 to 8192 games: the GPU is already saturated at 512).
 * Memory: building one dungeon needs about 4 MB of scratch, so dungeons are generated 64 at a time and only for games that
   just finished (`SEAM_GEN_CHUNK=256` on a big GPU for faster resets). 4096 parallel games need under 1 GB in total.
   JAX is told not to pre-reserve most of the GPU (`XLA_PYTHON_CLIENT_PREALLOCATE=false`); set it yourself to override.

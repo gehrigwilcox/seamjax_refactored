@@ -1,27 +1,30 @@
-import _path
+"""Simulation speed: batched steps (with auto-reset and the observation) per second.
+usage: python tools/bench.py [batch sizes...]      (default 512; e.g. `python tools/bench.py 512 2048 8192`)"""
+import _path, sys
 import time, numpy as np, jax, jax.numpy as jnp
 from jax import lax
-from seamjax.env import *
-from seamjax.gen import *
+from seamjax.env import make_env
+from seamjax.gen import gen_source, load_specs
 from seamjax.backend import describe
 print('JAX backend:', describe())
-SP=load_specs(); E=make_env(gen_source(SP))
-B=512; T=300
-keys=jax.random.split(jax.random.PRNGKey(1),B)
-state=E['reset_batch'](keys, jnp.full(B,6))
-obs_f=jax.vmap(E['observe'])
-def body(c,t):
-    s,k=c; k,ka,kr=jax.random.split(k,3)
-    a=jax.random.uniform(ka,(B,4),minval=-1,maxval=1)
-    rk=jax.random.split(kr,B)
-    s,r,d,_=E['step_auto_batch'](s,a,kr)
-    o=obs_f(s)
-    return (s,k),(r,d,jnp.isfinite(o).all(),s.player.hp.min(),s.player.x.min(),s.player.x.max())
-@jax.jit
-def run(s,k): return lax.scan(body,(s,k),jnp.arange(T))
-t0=time.time(); (s,k),out=run(state,jax.random.PRNGKey(2)); jax.block_until_ready(out); t1=time.time()
-_,out=run(state,jax.random.PRNGKey(2)); jax.block_until_ready(out); t2=time.time()
-r,d,fin,hpmin,xmin,xmax=[np.array(o) for o in out]
-print(f'compile+run {t1-t0:.1f}s, second run {t2-t1:.2f}s -> {B*T/(t2-t1):,.0f} env-steps/s on {jax.devices()[0]}')
-print('all obs finite',bool(fin.all()),'episodes ended',int(d.sum()),'reward mean/step',float(r.mean()),'x range',float(xmin.min()),float(xmax.max()))
-print('kills total',int(np.array(s.kills).sum()),'min hp seen',int(hpmin.min()))
+SP = load_specs(); E = make_env(gen_source(SP)); T = 300
+obs_f = jax.vmap(E['observe'])
+
+def bench(B):
+    state = E['reset_batch'](jax.random.split(jax.random.PRNGKey(1), B), jnp.full(B, 6))
+    def body(c, t):
+        s, k = c; k, ka, kr = jax.random.split(k, 3)
+        a = jax.random.uniform(ka, (B, 4), minval=-1, maxval=1)
+        s, r, d, _ = E['step_auto_batch'](s, a, kr)
+        o = obs_f(s)
+        return (s, k), (r, d, jnp.isfinite(o).all(), s.player.hp.min(), s.player.x.min(), s.player.x.max())
+    run = jax.jit(lambda s, k: lax.scan(body, (s, k), jnp.arange(T)))
+    t0 = time.time(); (s, k), out = run(state, jax.random.PRNGKey(2)); jax.block_until_ready(out); t1 = time.time()
+    _, out = run(state, jax.random.PRNGKey(2)); jax.block_until_ready(out); t2 = time.time()
+    r, d, fin, hpmin, xmin, xmax = [np.array(o) for o in out]
+    print(f'B={B:6d}: compile+run {t1-t0:5.1f}s, second run {t2-t1:6.2f}s -> {B*T/(t2-t1):>12,.0f} env-steps/s on {jax.devices()[0]}')
+    print(f'          all obs finite {bool(fin.all())}, episodes ended {int(d.sum())}, reward mean/step {float(r.mean()):.2e}, '
+          f'x range {float(xmin.min()):.0f}..{float(xmax.max()):.0f}, kills {int(np.array(s.kills).sum())}, min hp {int(hpmin.min())}')
+
+for B in [int(a) for a in sys.argv[1:]] or [512]:
+    bench(B)

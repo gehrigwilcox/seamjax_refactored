@@ -5,7 +5,7 @@ import numpy as np, jax, jax.numpy as jnp
 from seamjax.gen import load_specs, gen_dungeon
 from seamjax.minimap import chart, orient
 SP = load_specs(); CX, CY = 480., 300.; rng = np.random.default_rng(3)
-def view(va, mir, x, y): u = mir*x; c, s = math.cos(va), math.sin(va); return c*u-s*y, s*u+c*y
+from seamjax.core.geometry.view import view_np as view
 gd = jax.jit(lambda k, f: gen_dungeon(SP, k, f))
 def err(L, ch, r, d, va, mir, th, flip):
     P = ch['P']; out = []

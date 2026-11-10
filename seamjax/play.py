@@ -144,8 +144,7 @@ def main(argv=None):
     cache = {'sig': None}
 
     # ---- everything below is numpy: no device calls while drawing
-    def view(va, mir, x, y):
-        u = mir*x; c, s_ = math.cos(va), math.sin(va); return c*u-s_*y, s_*u+c*y
+    from seamjax.core.geometry.view import view_np as view
     def room_tables(sn):
         sig = (gen_id[0], int(sn['room']))
         if cache['sig'] != sig:

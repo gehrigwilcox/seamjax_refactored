@@ -18,6 +18,7 @@ import numpy as np
 import moderngl
 from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R, CHASER_R, SHOOTER_R
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
+from seamjax.core.geometry.view import view_np
 
 NSEG, NSPR, NPART = 40, 1024, 2048
 Q = np.array([-1, -1, 1, -1, -1, 1, 1, 1], 'f4')          # unit quad (triangle strip)
@@ -193,10 +194,6 @@ class Fx:
             elif n == 'shoot': self.burst(p, 4, (1., .89, .48), 130, .22, 3, now, .6)
             elif n in ('descend', 'newrun'): self.fade = 1.
 
-    @staticmethod
-    def _v(sn, x, y):
-        u = float(sn['mir'])*x; c, s = math.cos(float(sn['va'])), math.sin(float(sn['va'])); return c*u-s*y, s*u+c*y
-
     def decay(self, dt):
         self.shake *= math.exp(-dt*7.); self.hit *= math.exp(-dt*5.); self.flash *= math.exp(-dt*6.); self.fade = max(0., self.fade-dt*1.8)
 
@@ -286,13 +283,13 @@ class GLView:
             else: add(p, rad, 0, (1., 1., 1.) if en.flash[i] > 0 else ((.71, .49, 1.) if sh else (1., .48, .27)), 1.)
         for bl, rad, col, inten, ext, ln in ((sn['pb'], 3, (1., .89, .48), 1.5, 40, 16.), (sn['eb'], 4.5, (1., .54, .82), 1.4, 36, 10.)):
             for i in np.where(bl.alive)[0]:
-                vx, vy = Fx._v(sn, bl.vx[i], bl.vy[i]); add(M(bl.x[i], bl.y[i]), rad, 4, col, inten, ext, math.atan2(-vy, -vx), ln)
+                vx, vy = view_np(va, mir, bl.vx[i], bl.vy[i]); add(M(bl.x[i], bl.y[i]), rad, 4, col, inten, ext, math.atan2(-vy, -vx), ln)
         if bool(sn['hhere']) and r == int(sn['hroom']) and float(sn['hdead']) <= 0:
             add(M(float(sn['hx']), float(sn['hy'])), HUNTER_R*1.2, 2, (1., 1., 1.) if float(sn['hflash']) > 0 else (1., .36, .45), 1.1, HUNTER_R*4, t*.8)
         px = M(float(sn['x']), float(sn['y']))
         if not (float(sn['inv']) > 0 and int(t*20) % 2):
             add(px, PLAYER_R, 0, (.8, .9, 1.), .85, 44)
-        ang = float(sn['aim']); ax, ay = Fx._v(sn, math.cos(ang), math.sin(ang)); add(px, 1.6, 4, (1., .89, .48), 1.2, 40, math.atan2(ay, ax), 20.)
+        ang = float(sn['aim']); ax, ay = view_np(va, mir, math.cos(ang), math.sin(ang)); add(px, 1.6, 4, (1., .89, .48), 1.2, 40, math.atan2(ay, ax), 20.)
         return np.array(rows[:NSPR], 'f4').reshape(-1, 11), px
 
     # ---- one frame of the room (everything except the HUD)

@@ -10,7 +10,7 @@ import numpy as np, jax, jax.numpy as jnp
 from jax import lax
 from seamjax.difficulty import difficulty
 from seamjax.specs import load_specs
-from seamjax.env import hits_obs
+from seamjax.core.geometry.collide import inside_poly, hits_obstacles, free_spot, side_dist
 from seamjax.core.config import (TAU, CX, CY, DOOR_GAP as GAP, MAX_ROOMS as R, MAX_SIDES as NS_, MAX_OBSTACLES as NO, N_SPAWN_POINTS as NSP,
                                  PLAYER_R as PR_, GRID_W as GW, GRID_H as GH, GRID_CELL as CS, ROOM_RC as RC, ROOM_SQUASH_MIN as SMIN,
                                  DOOR_INSET, INF, WALL_GATED_P as GATED_P, WALL_THICK as WALL_TH, WALL_CLEAR, WALL_MINLEN)
@@ -29,21 +29,18 @@ def choose_spec(SP, key, floor):
     return jnp.argmax(jnp.where(w > 0, jnp.log(jnp.maximum(w, 1e-30)) + _gum(key, cat.shape), -1e9)).astype(jnp.int32)
 
 # ---------------------------------------------------------------- room design
-def _inside(side, n, x, y, m):
-    valid = jnp.arange(NS_) < n
-    d = (x-side[:, 0])*side[:, 2] + (y-side[:, 1])*side[:, 3]
-    return jnp.all(jnp.where(valid, d <= -m, True))
 
 _XS = (np.arange(GW)+.5)*CS; _YS = (np.arange(GH)+.5)*CS                  # numpy: nothing may start the JAX backend at import time
 _X, _Y = np.meshgrid(_XS, _YS)                                       # [GH, GW]
 
 def free_grid(side, n, obs, ot):
-    return jax.vmap(jax.vmap(lambda x, y: _inside(side, n, x, y, PR_+4) & ~hits_obs(x, y, PR_+4, _ob(obs, ot))))(_X, _Y)
+    """[GH, GW] cells where the player (plus a margin) fits"""
+    return jax.vmap(jax.vmap(lambda x, y: free_spot(x, y, PR_+4, side, n, _ob(obs, ot))))(_X, _Y)
 
 def flood(free, side, open_mask):
     """cells reachable from the doors in open_mask (flood fill by repeated dilation); connected = all those doors in one piece"""
     X, Y = _X, _Y
-    ex = side[:, 6]-side[:, 2]*30; ey = side[:, 7]-side[:, 3]*30
+    ex = side.door[:, 0]-side.normal[:, 0]*30; ey = side.door[:, 1]-side.normal[:, 1]*30
     has = jnp.any(open_mask)
     ex = jnp.where(open_mask, ex, jnp.where(has, 1e9, CX)); ey = jnp.where(open_mask, ey, jnp.where(has, 1e9, CY))
     d = jnp.where(free[None], jnp.hypot(X[None]-ex[:, None, None], Y[None]-ey[:, None, None]), 1e9)       # [12, GH, GW]
@@ -73,14 +70,15 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     mx, my = (Ax+Bx)/2, (Ay+By)/2; nx, ny = ty, -tx; half = ln/2
     off = U(ks[2], (NS_,), -1., 1.)*jnp.maximum(0., half-GAP-DOOR_INSET)
     dx, dy = mx+tx*off, my+ty*off
-    side = jnp.stack([mx, my, nx, ny, tx, ty, dx, dy], 1)*valid[:, None]
+    v2 = lambda a, b: jnp.stack([a, b], 1)*valid[:, None]
+    side = Sides(mid=v2(mx, my), normal=v2(nx, ny), tangent=v2(tx, ty), door=v2(dx, dy))
     rin = jnp.min(jnp.where(valid, (mx-CX)*nx+(my-CY)*ny, 1e9)); rb = RC*jnp.maximum(sx, sy)
     mo = jnp.minimum(110., rin*.5); enable = mo >= 60.
     style = jax.random.randint(ks[3], (), 0, 6)
 
     def pick(key, size, K=40):
         a, b = jax.random.split(key); x = U(a, (K,), CX-RC, CX+RC); y = U(b, (K,), CY-RC, CY+RC)
-        ok = jax.vmap(lambda x, y, s: _inside(side, n, x, y, mo+s))(x, y, jnp.broadcast_to(size, (K,)))
+        ok = jax.vmap(lambda x, y, s: inside_poly(side, n, x, y, mo+s))(x, y, jnp.broadcast_to(size, (K,)))
         i = jnp.argmax(ok); return x[i], y[i], jnp.any(ok)
     obs = jnp.zeros((NO, 5)); ot = jnp.full((NO,), -1, jnp.int32)
     def put(obs, ot, i, row, typ, on):
@@ -100,13 +98,13 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     w = U(ks[11], (), 90., 180.); h = U(ks[12], (), 60., 120.); x, y, ok = pick(ks[13], jnp.maximum(w, h)*.6)
     o3, t3 = put(obs, ot, 0, jnp.array([x-w/2, y-h/2, w, h, 0.]), 1, ok)
     # style 4: central pillar
-    rr = U(ks[14], (), 34., 56.); ok4 = _inside(side, n, CX, CY, mo+rr)
+    rr = U(ks[14], (), 34., 56.); ok4 = inside_poly(side, n, CX, CY, mo+rr)
     o4, t4 = put(obs, ot, 0, jnp.array([CX, CY, rr, 0., 0.]), 0, ok4)
     # style 5: wall with a gap
     k5 = jax.random.split(ks[15], 3); horiz = jax.random.uniform(k5[0]) < .5
     ls = jnp.arange(40., 171., 10.)
-    okl = jax.vmap(lambda l: jnp.where(horiz, _inside(side, n, CX+l, CY, mo) & _inside(side, n, CX-l, CY, mo),
-                                       _inside(side, n, CX, CY+l, mo) & _inside(side, n, CX, CY-l, mo)))(ls)
+    okl = jax.vmap(lambda l: jnp.where(horiz, inside_poly(side, n, CX+l, CY, mo) & inside_poly(side, n, CX-l, CY, mo),
+                                       inside_poly(side, n, CX, CY+l, mo) & inside_poly(side, n, CX, CY-l, mo)))(ls)
     good = jnp.cumprod(okl.astype(jnp.int32)) > 0
     L = jnp.max(jnp.where(good, ls, 0.)); gc = U(k5[1], (), -L+50, L-50); on5 = L >= 80
     a1h = jnp.array([CX-L, CY-8, L+gc-GAP, 16., 0.]); a2h = jnp.array([CX+gc+GAP, CY-8, L-gc-GAP, 16., 0.])
@@ -121,7 +119,7 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     reach, _ = reach_grid(side, n, obs, ot, open_mask)
     # ---- inner wall: splits the room into two sections, each holding some of the doors
     kw = jax.random.split(jax.random.fold_in(key, 55), 3)
-    px_d = side[:, 6]-side[:, 2]*30; py_d = side[:, 7]-side[:, 3]*30
+    px_d = side.door[:, 0]-side.normal[:, 0]*30; py_d = side.door[:, 1]-side.normal[:, 1]*30
     offs = jnp.arange(-110., 111., 10.)
     Pw = jnp.stack([CY+offs, CX+offs])                                                      # [2 axes (h, v), 23]
     cdoor = jnp.stack([py_d, px_d])                                                         # door coordinate across each axis
@@ -133,7 +131,7 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     Pw_ = Pw[wa, wo]; horizw = wa == 0
     tt = jnp.arange(-RC*1.1, RC*1.1, 3.)
     wx = jnp.where(horizw, CX+tt, Pw_); wy = jnp.where(horizw, Pw_, CY+tt)
-    insd = jax.vmap(lambda x, y: _inside(side, n, x, y, 2.))(wx, wy); along = jnp.where(horizw, wx, wy)
+    insd = jax.vmap(lambda x, y: inside_poly(side, n, x, y, 2.))(wx, wy); along = jnp.where(horizw, wx, wy)
     lo = jnp.min(jnp.where(insd, along, 1e9)); hi = jnp.max(jnp.where(insd, along, -1e9))
     gated = jax.random.uniform(kw[1]) < GATED_P
     row = jnp.where(horizw, jnp.stack([lo-3, Pw_-WALL_TH/2, hi-lo+6, WALL_TH, 1.]), jnp.stack([Pw_-WALL_TH/2, lo-3, WALL_TH, hi-lo+6, 1.]))
@@ -160,10 +158,10 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     # exit pad
     kp = jax.random.split(jax.random.fold_in(key, 77), 3)
     px = U(kp[0], (80,), CX-RC, CX+RC); py = U(kp[1], (80,), CY-RC, CY+RC)
-    okp = jax.vmap(lambda x, y: _inside(side, n, x, y, 90.) & ~hits_obs(x, y, 44., _ob(obs, ot)) & at(x, y))(px, py)
+    okp = jax.vmap(lambda x, y: inside_poly(side, n, x, y, 90.) & ~hits_obstacles(x, y, 44., _ob(obs, ot)) & at(x, y))(px, py)
     xs_ = (jnp.arange(GW)+.5)*CS; ys_ = (jnp.arange(GH)+.5)*CS; XX, YY = jnp.meshgrid(xs_, ys_)
-    depth = jax.vmap(jax.vmap(lambda x, y: jnp.min(jnp.where(valid, -((x-side[:, 0])*side[:, 2]+(y-side[:, 1])*side[:, 3]), 1e9))))(XX, YY)
-    clr = jax.vmap(jax.vmap(lambda x, y: ~hits_obs(x, y, 44., _ob(obs, ot))))(XX, YY)
+    depth = jax.vmap(jax.vmap(lambda x, y: jnp.min(jnp.where(valid, -side_dist(side, x, y), 1e9))))(XX, YY)
+    clr = jax.vmap(jax.vmap(lambda x, y: ~hits_obstacles(x, y, 44., _ob(obs, ot))))(XX, YY)
     fc = jnp.argmax(jnp.where(reach & clr, depth, -1e9))                                                   # fallback: deepest reachable cell
     fb = jnp.stack([XX.reshape(-1)[fc], YY.reshape(-1)[fc]])
     j = jnp.argmax(okp); pad = jnp.where(jnp.any(okp), jnp.stack([px[j], py[j]]), fb)
@@ -171,7 +169,7 @@ def design_room(key, n, is_exit, open_mask, want_wall):
     # spawn points (16 pre-validated)
     ksp = jax.random.split(jax.random.fold_in(key, 99), 2)
     sx_ = CX+(U(ksp[0], (600,))*2-1)*rb; sy_ = CY+(U(ksp[1], (600,))*2-1)*rb
-    oks = jax.vmap(lambda x, y: _inside(side, n, x, y, 40.) & ~hits_obs(x, y, 24., _ob(obs, ot)) & at(x, y))(sx_, sy_)
+    oks = jax.vmap(lambda x, y: inside_poly(side, n, x, y, 40.) & ~hits_obstacles(x, y, 24., _ob(obs, ot)) & at(x, y))(sx_, sy_)
     oks = oks & ((jnp.hypot(sx_-pad[0], sy_-pad[1]) > 70) | ~is_exit)
     sec_all = jnp.where(wax == 0, 0, jnp.where(wax == 1, sy_ >= wpos, sx_ >= wpos)).astype(jnp.int32)
     rank = jnp.where(sec_all == 0, jnp.cumsum(oks & (sec_all == 0)), jnp.cumsum(oks & (sec_all == 1)))
@@ -291,9 +289,9 @@ def gen_dungeon(SP, key, floor):
     A = node_adj(wkind)
     nd0 = jnp.where(A, 1, INF); nd0 = jnp.where(jnp.eye(2*R, dtype=bool), 0, nd0)
     ndist = jnp.minimum(lax.fori_loop(0, 2*R, lambda kk, D: jnp.minimum(D, D[:, kk, None]+D[None, kk, :]), nd0), INF)
-    side = z(side)
+    side = jax.tree_util.tree_map(z, side)
     return Dungeon(n=pn, doors=dn.astype(jnp.int32), arrive=arr.astype(jnp.int32), flip=flipc.astype(jnp.int32),
-                   sides=Sides(mid=side[..., 0:2], normal=side[..., 2:4], tangent=side[..., 4:6], door=side[..., 6:8]),
+                   sides=side,
                    obstacles=_ob(z(obs), jnp.where(live[:, None], ot, -1)), pad=z(pad), radius=z(rb), inradius=z(rin), area=z(area),
                    spawn=z(spawn), spawn_ok=z(sok), spawn_sec=ssec, wall_axis=wax, wall_pos=wpos, wall_kind=wkind, door_sec=dsec.astype(jnp.int32),
                    depth=depth.astype(jnp.int32), map_pos=z(SP['cvec'][sid][ordr]), door_seam=jnp.where(dn >= 0, SP['seam'][sid][ordr], 0).astype(jnp.int32),
