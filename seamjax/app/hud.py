@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, HUNTER_HP
 from seamjax.core import kinds
+from seamjax.difficulty import FLOOR_CAP
 from seamjax.app import minimap
 from seamjax.app.snapshot import hunter_shown
 from seamjax.app.worldname import explain as explain_world
@@ -51,6 +52,13 @@ def draw(cv, sn, room, M, world, toast, dead, dbg, map_layout=None, bot=False):
     """M maps a room-frame point to the screen; world: the catalogue entry; map_layout: a callable (fetched only when shown)"""
     if hunter_shown(sn):                                                     # Hunter health bar
         x, y = M(float(sn.hunter.x), float(sn.hunter.y)); cv.rect(x-18, y-34, 36, 4, (60, 10, 20)); cv.rect(x-18, y-34, 36*float(sn.hunter.hp)/HUNTER_HP, 4, (255, 93, 115))
+    en = sn.enemies                                                          # a boss in the room: its name and health across the top
+    for i in np.where(np.asarray(en.alive))[0]:
+        k = kinds.ENEMY_KINDS[int(en.kind[i])]
+        if k.boss_every:
+            full = k.hp+min(int(sn.floor), FLOOR_CAP)*k.hp_per_floor; w = 360.
+            cv.text(k.name.upper(), VW/2, 46, FONT, (255, 170, 220), 'c'); cv.rect(VW/2-w/2, 72, w, 8, (60, 20, 50), 3)
+            cv.rect(VW/2-w/2, 72, w*max(0., float(en.hp[i]))/full, 8, (255, 110, 200), 3); break
     pc = kinds.PLAYER_CLASSES[int(sn.player.cls)]
     for i in range(pc.max_hp):
         cv.rect(12+i*22, 10, 16, 16, (255, 92, 115) if i < int(sn.player.hp) else (60, 40, 46), 4)

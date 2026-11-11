@@ -51,6 +51,7 @@ def canon_step(s):
 def canon_state(s):
     """the whole state of one game (minus the dungeon, checked separately)"""
     en, pb, eb, pk = s.enemies, s.pb, s.eb, s.pickups
+    eb = jax.tree_util.tree_map(lambda a: a[:24], eb)              # the enemy-bullet pool held 24 when the trace was recorded
     xy = lambda p: jnp.stack([p.x, p.y], -1)
     out = canon_step(s)
     out.update(visited=s.visited, wopen=s.wall_open, spawned=s.spawned, key=s.key,

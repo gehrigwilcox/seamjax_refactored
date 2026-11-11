@@ -6,7 +6,7 @@ from seamjax.app.snapshot import Snapshot, Flags
 
 def pool(cls, n, rows=()):
     """a pool of capacity n whose first slots hold `rows` (dicts of field values; unset fields are 0 / False)"""
-    cols = {f: np.zeros(n, bool if f in ('alive', 'ghost') else int if f in ('kind', 'pierce', 'hits', 'room', 'sec', 'way') else float) for f in cls.fields()}
+    cols = {f: np.zeros(n, bool if f in ('alive', 'ghost') else int if f in ('kind', 'pierce', 'hits', 'room', 'sec', 'way', 'phase') else float) for f in cls.fields()}
     for i, row in enumerate(rows):
         for f, v in row.items(): cols[f][i] = v
     return cls(**cols)

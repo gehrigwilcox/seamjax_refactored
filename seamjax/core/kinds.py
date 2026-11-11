@@ -17,10 +17,28 @@ import numpy as np
 # behaviours (how a kind moves; see sim/systems/enemies.py)
 CHASE = 0           # straight at you
 SKIRMISH = 1        # keep a distance: back off when close, close in when far, else strafe round you
+STAND = 2           # stays where it is
 # routes (how a follower comes after you through the dungeon; see sim/systems/roamers.py)
 DIRECT = 0          # the true shortest route
 FLANK = 1           # through a room next to yours, so it comes in by another door than you did
 DETOUR = 2          # via a random room first, at most 4 doors out of its way
+
+
+@dataclass(frozen=True)
+class Phase:
+    """one phase of a boss, from when its hp falls to `below` of its full hp: how it moves and the volley it fires.
+    A volley is `count` bullets spread over `spread` radians (2*pi = a ring), centred on you (aimed) or on an angle that turns
+    by `spin` radians per second (a spiral)."""
+    below: float                    # 1. = from the start; .5 = from half hp
+    behaviour: int = CHASE
+    speed: float = 0.
+    count: int = 1
+    spread: float = 0.
+    aimed: bool = True
+    spin: float = 0.
+    interval: float = 1.5           # seconds between volleys
+    bullet_speed: float = 190.
+    bullet_life: float = 3.
 
 
 @dataclass(frozen=True)
@@ -46,6 +64,9 @@ class EnemyKind:
     route: int = DIRECT             # how it comes after you (DIRECT / FLANK / DETOUR)
     hop: float = 2.                 # seconds per door while following
     follow_delay: float = 1.        # seconds before it sets off after you (followers set off one after another)
+    hp_per_floor: float = 0.        # added to hp per floor (up to the difficulty cap)
+    boss_every: int = 0             # a boss: one spawns in the exit room on every boss_every-th floor (never by share)
+    phases: tuple = ()              # a boss's Phases, in order of falling hp
 
 
 CHASER = EnemyKind('chaser', radius=12., hp=3., behaviour=CHASE, speed=70., speed_per_floor=7.)
@@ -62,8 +83,24 @@ ENEMY_KINDS = (CHASER, SHOOTER, STALKER, FLANKER)
 def table(kinds=None):
     """the kinds as numpy columns: table().radius[k], table().ranged[k], ... (numeric fields only)"""
     kinds = ENEMY_KINDS if kinds is None else kinds
-    cols = {f.name: np.array([getattr(k, f.name) for k in kinds]) for f in fields(EnemyKind) if f.name not in ('name', 'share')}
+    cols = {f.name: np.array([getattr(k, f.name) for k in kinds]) for f in fields(EnemyKind) if f.name not in ('name', 'share', 'phases')}
     return SimpleNamespace(**cols)
+
+
+def phase_table(kinds=None):
+    """the bosses' phases as numpy columns [kind, phase]: below, behaviour, speed, count, ...; kinds without phases (and unused
+    phase slots) have below = -1, so they never switch into them"""
+    kinds = ENEMY_KINDS if kinds is None else kinds; P = max([len(k.phases) for k in kinds] + [1])
+    cols = {}
+    for f in fields(Phase):
+        cols[f.name] = np.array([[getattr(k.phases[j], f.name) if j < len(k.phases) else (-1. if f.name == 'below' else 0)
+                                  for j in range(P)] for k in kinds])
+    return SimpleNamespace(**cols)
+
+
+def bosses(kinds=None):
+    """(index, kind) of every boss kind"""
+    return [(i, k) for i, k in enumerate(ENEMY_KINDS if kinds is None else kinds) if k.boss_every > 0]
 
 
 @dataclass(frozen=True)

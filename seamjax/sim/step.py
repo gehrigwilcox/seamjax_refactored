@@ -10,7 +10,7 @@ golden trace (tests/golden_test.py) pins it down.
 import jax, jax.numpy as jnp
 from seamjax.core import struct
 from seamjax.sim.state import cond, hurt, no_events
-from seamjax.sim.systems import player, hunter, roamers, transit, enemies, projectiles, pickups, rooms
+from seamjax.sim.systems import player, hunter, roamers, transit, enemies, bosses, projectiles, pickups, rooms
 
 DT = 1/60.
 
@@ -34,6 +34,7 @@ def combat(s, ev, action, dt):
     s, ev, killed = projectiles.player_bullet_hits(s, ev, dt, swung)
     s = pickups.drop(s, killed, k_drop)
     s = enemies.shoot(s, k_fire, dt)
+    s = bosses.tick(s, dt)
     s, contact = enemies.move(s, dt)
     s, shot = projectiles.enemy_bullets(s, dt)
     s, ev = cond(contact | shot, hurt, s, ev)

@@ -133,6 +133,8 @@ class Enemies:
     telegraph: object   # time until it becomes active (shown as a ring until then)
     flash: object       # hit-flash time left
     alive: object
+    phase: object       # int: a boss's current phase (kinds.Phase); 0 for everything else
+    ptimer: object      # seconds in the current phase
 
 
 @pytree

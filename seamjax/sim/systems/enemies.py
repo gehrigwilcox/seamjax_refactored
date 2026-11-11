@@ -11,11 +11,12 @@ from seamjax.difficulty import difficulty, FLOOR_CAP
 from seamjax.core import pool
 from seamjax.core.ops import argsort_small
 from seamjax.core import kinds
-from seamjax.core.config import MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX
+from seamjax.core.config import (MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX, CX, CY,
+                                 BOSS_TELEGRAPH, PHASE_PAUSE)
 from seamjax.core.types import Enemies
 from seamjax.sim.state import bullet
 from seamjax.core.geometry.collide import push_out
-from seamjax.sim.queries import room_geom, eff_sec
+from seamjax.sim.queries import room_geom, eff_sec, sec_point
 
 
 def of(name, kind):
@@ -57,8 +58,13 @@ def spawn(s, key, sec):
     kind = (mix.shape[0]-1 - jnp.sum(jax.random.uniform(k3, (NE,))[:, None] >= thr[None, :], axis=1)).astype(jnp.int32)
     new = Enemies(x=pts[order, 0], y=pts[order, 1], hp=of('hp', kind), kind=kind,
                   fire=of('first_shot', kind) + jax.random.uniform(k4, (NE,))*of('first_shot_rand', kind), telegraph=jnp.full(NE, TELEGRAPH),
-                  flash=jnp.zeros(NE), alive=okp[order] & (jnp.arange(NE) < cnt))
+                  flash=jnp.zeros(NE), alive=okp[order] & (jnp.arange(NE) < cnt), phase=jnp.zeros(NE, jnp.int32), ptimer=jnp.zeros(NE))
     rows = pool.fill(s.enemies[room], new)                           # into free slots: the other section's enemies stay
+    for bi, bk in kinds.bosses():                                    # a boss floor: the boss waits in the exit pad's section
+        pad = dun.pad[room]; on = isx & (dun.floor % bk.boss_every == 0) & (sec == eff_sec(s, room, sec_point(dun, room, pad[0], pad[1])))
+        far = jnp.argmax(jnp.where(mine, dpl, -1.)); x = jnp.where(jnp.any(mine), pts[far, 0], CX); y = jnp.where(jnp.any(mine), pts[far, 1], CY)
+        rows = pool.spawn(rows, Enemies(x=x, y=y, hp=bk.hp+floor*bk.hp_per_floor, kind=bi, fire=PHASE_PAUSE, telegraph=BOSS_TELEGRAPH, flash=0.,
+                                        alive=True, phase=0, ptimer=0.), on)
     return s.replace(enemies=pool.set_row(s.enemies, room, rows))
 
 
@@ -91,8 +97,16 @@ def move(s, dt):
     retreat = ed < of('retreat', en.kind); approach = ed > of('approach', en.kind); strafe = of('strafe', en.kind)
     sdx = jnp.where(retreat, -edx/ed*sp, jnp.where(approach, edx/ed*sp, -edy/ed*sp*strafe))
     sdy = jnp.where(retreat, -edy/ed*sp, jnp.where(approach, edy/ed*sp, edx/ed*sp*strafe))
-    skirmish = of('behaviour', en.kind) == kinds.SKIRMISH
-    vx_ = jnp.where(skirmish, sdx, cdx); vy_ = jnp.where(skirmish, sdy, cdy)
+    beh = of('behaviour', en.kind)
+    if kinds.bosses():                                               # a boss moves as its current phase says
+        P = kinds.phase_table(); boss = of('boss_every', en.kind) > 0; ph = jnp.minimum(en.phase, P.below.shape[1]-1)
+        bsp = jnp.asarray(P.speed)[en.kind, ph]
+        cdx, cdy = jnp.where(boss, edx/ed*bsp, cdx), jnp.where(boss, edy/ed*bsp, cdy)
+        sdx = jnp.where(boss, jnp.where(retreat, -edx/ed*bsp, jnp.where(approach, edx/ed*bsp, -edy/ed*bsp*strafe)), sdx)
+        sdy = jnp.where(boss, jnp.where(retreat, -edy/ed*bsp, jnp.where(approach, edy/ed*bsp, edx/ed*bsp*strafe)), sdy)
+        beh = jnp.where(boss, jnp.asarray(P.behaviour)[en.kind, ph], beh)
+    skirmish = beh == kinds.SKIRMISH; stand = beh == kinds.STAND
+    vx_ = jnp.where(stand, 0., jnp.where(skirmish, sdx, cdx)); vy_ = jnp.where(stand, 0., jnp.where(skirmish, sdy, cdy))
     nx = en.x+jnp.where(act, vx_*dt, 0.); ny = en.y+jnp.where(act, vy_*dt, 0.)
     nx2, ny2 = jax.vmap(lambda a, b, r: push_out(a, b, r, sides, n, ob))(nx, ny, er)
     nx = jnp.where(act, nx2, nx); ny = jnp.where(act, ny2, ny)

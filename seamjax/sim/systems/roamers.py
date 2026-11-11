@@ -82,7 +82,7 @@ def tick(s, ev, dt):
         f = pool.first_free(en); go = here[i] & ~en.alive[f]
         door, nrm = dun.sides.door[room, side[i]], dun.sides.normal[room, side[i]]
         new = Enemies(x=door[0]-nrm[0]*HUNTER_DOOR_INSET, y=door[1]-nrm[1]*HUNTER_DOOR_INSET, hp=R.hp[i], kind=R.kind[i],
-                      fire=of('first_shot', R.kind[i]), telegraph=ARRIVE_TELEGRAPH, flash=0., alive=True)
+                      fire=of('first_shot', R.kind[i]), telegraph=ARRIVE_TELEGRAPH, flash=0., alive=True, phase=0, ptimer=0.)
         en = jax.tree_util.tree_map(lambda a, b: jnp.where(go, a, b), pool.put(en, f, new), en)
         return R.replace(alive=R.alive.at[i].set(R.alive[i] & ~go)), en
     R, en = lax.fori_loop(0, R.alive.shape[0], come_in, (R, s.enemies[room]))

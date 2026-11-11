@@ -160,6 +160,7 @@ THEME = Theme(
         death=Effect(Sound(synth='death', pan=False), (Burst(70, (1., .7, .75), 330, 1.1, 8),), shake=1.4),
         hunter_hit=Effect(Sound(synth='hunter_hit'), (Burst(8, RED, 170, .4, 4),)),
         hunter_die=Effect(Sound(synth='hunter_die'), (Burst(60, RED, 300, 1., 7),), shake=.8, flash=.6),
+        boss_phase=Effect(Sound(synth='hunter_hit'), (Burst(40, (1., .55, .9), 260, .8, 6),), shake=.7, flash=.35),
         open=Effect(Sound(synth='open', pan=False)),
         descend=Effect(Sound(synth='descend', pan=False), fade=1.),
         newrun=Effect(fade=1.),

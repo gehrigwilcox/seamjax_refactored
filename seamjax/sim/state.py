@@ -25,7 +25,8 @@ def class_of(s, name):
 
 def empty_enemies(R):
     z = jnp.zeros((R, NE)); b = jnp.zeros((R, NE), bool)
-    return Enemies(x=z, y=z, hp=z, kind=jnp.zeros((R, NE), jnp.int32), fire=z, telegraph=z, flash=z, alive=b)
+    i = jnp.zeros((R, NE), jnp.int32)
+    return Enemies(x=z, y=z, hp=z, kind=i, fire=z, telegraph=z, flash=z, alive=b, phase=i, ptimer=z)
 
 def empty_roamers(n):
     z = jnp.zeros(n); i = jnp.zeros(n, jnp.int32)
