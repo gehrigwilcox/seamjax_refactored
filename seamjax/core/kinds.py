@@ -1,6 +1,7 @@
 """
-Enemy kinds as data. Each kind is one EnemyKind row; the simulation, the observation, the renderers and the sound all read
-this table, so a new kind of enemy is a new row (plus, for a new way of moving, one more behaviour in sim/systems/enemies.py).
+Enemy kinds as data. Each kind is one EnemyKind row that the simulation and the observation read, so a new kind of enemy is
+a new row (plus, for a new way of moving, one more behaviour in sim/systems/enemies.py). How a kind looks and sounds is in
+seamjax/theme.py, by the kind's name (a kind without a look there is drawn as a grey disk).
 
 The index of a kind in ENEMY_KINDS is what Enemies.kind stores.
 The share of each kind among spawned enemies depends on the floor: share = clip(base + per_floor*(floor-1), lo, hi);
@@ -36,13 +37,10 @@ class EnemyKind:
     bullet_speed: float = 190.
     bullet_life: float = 3.
     share: tuple = None             # (base, per_floor, lo, hi): share of spawns, or None for "the rest"
-    colour: tuple = (255, 122, 69)  # how it is drawn (0..255)
-    kill_sound: str = 'kill_charger'
 
 
 CHASER = EnemyKind('chaser', radius=12., hp=3., behaviour=CHASE, speed=70., speed_per_floor=7.)
-SHOOTER = EnemyKind('shooter', radius=14., hp=4., behaviour=SKIRMISH, speed=55., ranged=True, share=(.12, .03, .12, .45),
-                    colour=(180, 126, 255), kill_sound='kill_shooter')
+SHOOTER = EnemyKind('shooter', radius=14., hp=4., behaviour=SKIRMISH, speed=55., ranged=True, share=(.12, .03, .12, .45))
 
 ENEMY_KINDS = (CHASER, SHOOTER)
 
@@ -50,8 +48,7 @@ ENEMY_KINDS = (CHASER, SHOOTER)
 def table(kinds=None):
     """the kinds as numpy columns: table().radius[k], table().ranged[k], ... (numeric fields only)"""
     kinds = ENEMY_KINDS if kinds is None else kinds
-    cols = {f.name: np.array([getattr(k, f.name) for k in kinds]) for f in fields(EnemyKind) if f.name not in ('name', 'share', 'kill_sound')}
-    cols['colour'] = cols['colour'].astype(np.float32)/255.
+    cols = {f.name: np.array([getattr(k, f.name) for k in kinds]) for f in fields(EnemyKind) if f.name not in ('name', 'share')}
     return SimpleNamespace(**cols)
 
 

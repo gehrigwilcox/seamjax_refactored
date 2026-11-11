@@ -1,7 +1,9 @@
 """GLSL sources of the OpenGL view (version 330) and the buffer sizes they are written for."""
 import numpy as np
 
-NSEG, NSPR, NPART = 40, 1024, 2048
+NSEG, NSPR, NPART, NTEX = 40, 1024, 2048, 32          # NTEX: sprite textures in the atlas
+SHAPE_TEXTURE = 5                                     # sprite kind: an image from the atlas (f_len = its index)
+FLOOR_TEXTURE = 4                                     # floor style: a tiled image
 Q = np.array([-1, -1, 1, -1, -1, 1, 1, 1], 'f4')          # unit quad (triangle strip)
 
 VERT_FS = '''#version 330
@@ -19,6 +21,7 @@ float fbm(vec2 p){ float a = .5, s = 0.; for(int i = 0; i < 4; i++){ s += a*vnoi
 SCENE_FS = '''#version 330
 in vec2 v_uv; out vec4 o;
 uniform vec2 u_res, u_ctr, u_player; uniform float u_time, u_hue, u_va, u_mir; uniform int u_style;
+uniform sampler2D u_floor; uniform float u_fscale;
 uniform int u_nv; uniform vec2 u_vtx[12]; uniform float u_wind;
 uniform int u_ns; uniform vec4 u_segA[40]; uniform vec4 u_segC[40];
 uniform int u_no; uniform vec4 u_obsA[6]; uniform vec4 u_obsB[6]; uniform vec4 u_obsC[6];
@@ -32,13 +35,14 @@ void main(){
   vec2 wp = vec2(u_mir*(c*q.x+s*q.y), -s*q.x+c*q.y)+u_ctr;
   float n = fbm(wp/90.+vec2(u_time*.02, -u_time*.015));
   vec3 base = hsl(u_hue, .35, .10)*(.75+.6*n), tint = hsl(u_hue, .45, .55);
+  if(u_style == 4) base = texture(u_floor, wp/u_fscale).rgb*(.55+.3*n);           // a tiled floor image
   float line = 0.; vec2 rel = wp-u_ctr;
   if(u_style == 0){ vec2 g = abs(fract(wp/44.-.5)-.5)*44.; line = 1.-smoothstep(0., 1.3, min(g.x, g.y)); }
   else if(u_style == 1){ float r = length(rel); float ring = abs(fract(r/46.)-.5)*46.; float a = atan(rel.y, rel.x);
     float sp = abs(fract(a/.5235988+.5)-.5)*r*.5235988; line = 1.-smoothstep(0., 1.3, min(ring, r > 40. ? sp : 9.)); }
   else if(u_style == 2){ vec2 g = fract(wp/44.-.5)-.5; float dd = length(g)*44.; vec2 g2 = abs(g)*44.;
     line = max(1.-smoothstep(1.4, 3.4, dd), .35*(1.-smoothstep(0., 1.1, min(g2.x, g2.y)))); }
-  else { float d1 = abs(fract((wp.x+wp.y)/62.-.5)-.5)*62./1.414, d2 = abs(fract((wp.x-wp.y)/62.-.5)-.5)*62./1.414;
+  else if(u_style == 3){ float d1 = abs(fract((wp.x+wp.y)/62.-.5)-.5)*62./1.414, d2 = abs(fract((wp.x-wp.y)/62.-.5)-.5)*62./1.414;
     line = (1.-smoothstep(0., 1.2, min(d1, d2)))*(.55+.45*sin((wp.x+wp.y)*.02-u_time*1.3)); }
   vec3 fl = base+tint*line*.16;
   fl *= 1.-.28*smoothstep(0., 340., length(p-u_ctr));
@@ -70,6 +74,7 @@ void main(){ v_l = in_corner*in_ext; vec2 p = in_c+v_l; gl_Position = vec4(p.x/u
 
 SPRITE_FS = '''#version 330
 in vec2 v_l; flat in float f_r, f_kind, f_ang, f_len; flat in vec4 f_col; out vec4 o;
+uniform sampler2D u_tex; uniform vec4 u_uv[32];
 float dot2(vec2 v){ return dot(v, v); }
 float sdPoly(vec2 p, float r, float n){ float an = 3.14159265/n; vec2 acs = vec2(cos(an), sin(an)); float bn = mod(atan(p.x, p.y), 2.*an)-an;
   p = length(p)*vec2(cos(bn), abs(sin(bn))); p -= r*acs; p.y += clamp(-p.y, 0., r*acs.y); return length(p)*sign(p.x); }
@@ -81,6 +86,9 @@ void main(){
   else if(k == 1){ d = abs(length(l)-r)-f_len*.5; }
   else if(k == 2){ float c = cos(f_ang), s = sin(f_ang); vec2 m = vec2(c*l.x+s*l.y, -s*l.x+c*l.y); d = sdPoly(vec2(m.x, -m.y), r, 5.); shade = .35+.9*smoothstep(-4., -1., d); }
   else if(k == 3){ float sc = 2.3*r; d = sdHeart(vec2(l.x, -l.y)/sc+vec2(0., .5))*sc; }
+  else if(k == 5){ float c = cos(f_ang), s = sin(f_ang); vec2 m = vec2(c*l.x+s*l.y, -s*l.x+c*l.y)/r;       // an image from the atlas
+    vec4 rc = u_uv[int(f_len+.5)]; vec4 tx = (abs(m.x) <= 1. && abs(m.y) <= 1.) ? texture(u_tex, mix(rc.xy, rc.zw, m*.5+.5)) : vec4(0.);
+    o = vec4(f_col.rgb*tx.rgb*tx.a*f_col.a, 1.); return; }
   else { vec2 dv = vec2(cos(f_ang), sin(f_ang)); float a = dot(l, dv), b = dot(l, vec2(-dv.y, dv.x));
          d = length(vec2(a-clamp(a, 0., f_len), b))-r; shade = mix(1., .12, clamp(a/max(f_len, 1.), 0., 1.)); }
   float fill = smoothstep(1., -1., d), glow = exp(-max(d, 0.)/(r*.6+3.))*.5;

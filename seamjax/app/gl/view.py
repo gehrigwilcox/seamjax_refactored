@@ -12,26 +12,39 @@ OpenGL view for the Seam viewer (moderngl).  Everything you see in the room is d
 All shader coordinates are the game's logical pixels (960 x 600, y down), already transformed by the room's view
 (rotation and mirror) on the CPU, so the shaders never flip anything: controls are untouched by any of this.
 fx.py turns game events (see app/events.py: a kill, a hit, a pickup...) into particles, shake and flashes.
+What everything looks like (shapes, colours, glow, textures, floor patterns, wall colours) comes from seamjax/theme.py:
+sprite and floor images are loaded once, sprites into one atlas.
 """
 import math, colorsys
 import numpy as np
 import moderngl
 from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R
 from seamjax.core import kinds
+from seamjax import theme as themes
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
 from seamjax.core.geometry.view import view_np
 
-from seamjax.app.gl.shaders import (NSEG, NSPR, NPART, Q, VERT_FS, SCENE_FS, SPRITE_VS, SPRITE_FS, PART_VS, PART_FS, BRIGHT_FS,
-                                     BLUR_FS, COMP_FS)
+from seamjax.app.gl.shaders import (NSEG, NSPR, NPART, NTEX, SHAPE_TEXTURE, FLOOR_TEXTURE, Q, VERT_FS, SCENE_FS, SPRITE_VS, SPRITE_FS,
+                                     PART_VS, PART_FS, BRIGHT_FS, BLUR_FS, COMP_FS)
 from seamjax.app.snapshot import hunter_shown
 
 
 def rgb(h, s, l): return np.array(colorsys.hls_to_rgb((h % 360)/360., l, s), 'f4')
 
+SHAPE = {name: i for i, name in enumerate(themes.SHAPES)}
+TEX_SPRITE, TEX_FLOOR = 4, 3                            # texture units of the sprite atlas and the floor image
+
+
+def _image(path):
+    """an image file -> (w, h, RGBA bytes, first row = top)"""
+    import pygame
+    im = pygame.image.load(themes.asset(path))
+    return im.get_width(), im.get_height(), pygame.image.tobytes(im, 'RGBA')
+
 
 class GLView:
-    def __init__(self, VW, VH):
-        self.VW, self.VH = VW, VH
+    def __init__(self, VW, VH, theme=None):
+        self.VW, self.VH = VW, VH; self.theme = theme or themes.THEME
         ctx = self.ctx = moderngl.create_context()
         if ctx.version_code < 330: raise RuntimeError('OpenGL 3.3 needed, got %d' % ctx.version_code)
         mk = lambda vs, fs: ctx.program(vertex_shader=vs, fragment_shader=fs)
@@ -42,6 +55,23 @@ class GLView:
         self.spr_vao = ctx.vertex_array(self.p_spr, [(self.tri, '2f', 'in_corner'), (self.spr_buf, '2f 1f 1f 1f 4f 1f 1f/i', 'in_c', 'in_r', 'in_ext', 'in_kind', 'in_col', 'in_ang', 'in_len')])
         self.part_vao = ctx.vertex_array(self.p_part, [(self.tri, '2f', 'in_corner'), (self.part_buf, '2f 2f 1f 1f 4f 1f/i', 'in_p0', 'in_v', 'in_t0', 'in_life', 'in_col', 'in_size')])
         self.size = None; self.rect = (0, 0, int(VW), int(VH)); self.win = (int(VW), int(VH))
+        self._load_textures()
+
+    def _load_textures(self):
+        """the theme's sprite images, packed in one atlas (a row of equal cells), and its floor images"""
+        ctx = self.ctx; sprites, floors = self.theme.textures(); assert len(sprites) <= NTEX, 'at most %d sprite textures' % NTEX
+        ims = [_image(p) for p in sprites]; cw = max([w for w, h, _ in ims] or [1]); chh = max([h for w, h, _ in ims] or [1])
+        atlas = np.zeros((chh, cw*max(1, len(ims)), 4), np.uint8); uv = np.zeros((NTEX, 4), 'f4'); self.tex_index = {}
+        for i, (p, (w, h, data)) in enumerate(zip(sprites, ims)):
+            atlas[:h, i*cw:i*cw+w] = np.frombuffer(data, np.uint8).reshape(h, w, 4)
+            uv[i] = [i*cw/atlas.shape[1], 0., (i*cw+w)/atlas.shape[1], h/chh]; self.tex_index[p] = i
+        self.atlas = ctx.texture((atlas.shape[1], atlas.shape[0]), 4, atlas.tobytes()); self.atlas.repeat_x = self.atlas.repeat_y = False
+        self.atlas.filter = (moderngl.LINEAR, moderngl.LINEAR); self._arr(self.p_spr, 'u_uv', uv)
+        self.floor_tex = {}
+        for p in floors:
+            w, h, data = _image(p); t = ctx.texture((w, h), 4, data); t.build_mipmaps(); t.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+            self.floor_tex[p] = t
+        self.blank = ctx.texture((1, 1), 4, bytes([255, 255, 255, 255]))
 
     # ---- window / framebuffers
     def resize(self, win):
@@ -69,14 +99,14 @@ class GLView:
         if name in prog: prog[name].write(np.ascontiguousarray(a, 'f4').tobytes())
 
     def _geometry(self, sn, c, M, t):
-        n = c.n; V = np.array([M(*v) for v in c.corners]); hue = c.hue; hd = int(sn.hunter_door); wallc = rgb(hue, .55, .58); segs = []
+        W = self.theme.walls; n = c.n; V = np.array([M(*v) for v in c.corners]); hue = c.hue; hd = int(sn.hunter_door); wallc = rgb(hue, *W.wall); segs = []
         for k in range(n):
             A, B = V[(k-1) % n], V[k]
             if c.doors[k] >= 0:
                 (tx, ty), (dx, dy) = c.sides.tangent[k], c.sides.door[k]
                 g0 = np.array(M(dx-tx*DOOR_GAP, dy-ty*DOOR_GAP)); g1 = np.array(M(dx+tx*DOOR_GAP, dy+ty*DOOR_GAP))
                 near, far = (A, B) if np.dot(A-g0, A-g0) < np.dot(B-g0, B-g0) else (B, A)
-                col = np.array([1., .24, .35])*(.55+.45*math.sin(t*8)) if k == hd else np.array([1., .745, .43]) if (c.wall_kind > 0 and c.door_sec[k] > 0) else np.array([.59, .92, 1.])
+                col = np.array(W.hunter_door)*(.55+.45*math.sin(t*8)) if k == hd else np.array(W.door_other_side) if (c.wall_kind > 0 and c.door_sec[k] > 0) else np.array(W.door)
                 segs += [(near, g0, wallc, 4.), (g1, far, wallc, 4.), (g0, g1, col, 8. if k == hd else 5.)]
             else: segs.append((A, B, wallc, 4.))
         sa = np.zeros((NSEG, 4), 'f4'); sc = np.zeros((NSEG, 4), 'f4')
@@ -91,46 +121,56 @@ class GLView:
         for ty, (px, py), (w, h), wall in zip(ob.kind, ob.pos, ob.size, ob.wall):
             if ty == OBST_NONE or m >= 6: continue
             if wall and wopen: continue
-            col = (np.array([.35, .59, 1.]) if c.wall_kind == WALL_GATED else np.array([1., .39, .62])) if wall else rgb(c.hue, .35, .26)
+            W = self.theme.walls
+            col = np.array(W.gated_wall if c.wall_kind == WALL_GATED else W.solid_wall) if wall else rgb(c.hue, *W.obstacle)
             if ty == OBST_CIRCLE: ctr = M(px, py); A[m] = [*ctr, w, 0]; B[m] = [0, 1, 0, 0]
             else: ctr = M(px+w/2, py+h/2); A[m] = [*ctr, w/2, h/2]; B[m] = [1, cs, sn_, 0]
             C[m] = [*col, 1. if wall else 0.]; m += 1
         return m, A, B, C
 
     def _sprites(self, sn, c, M, va, mir, t):
-        rows = []; r = int(sn.room)
-        def add(p, rad, kind, col, inten=1., ext=None, ang=0., ln=0.):
-            rows.append([p[0], p[1], rad, ext if ext is not None else rad*3.2+8, kind, col[0], col[1], col[2], inten, ang, ln])
+        """one instance row per sprite: centre, radius, quad half-size, shape (or texture), colour + brightness, angle, width"""
+        T = self.theme; L = T.looks; rows = []; r = int(sn.room)
+        def add(look, p, rad, inten=1., ext=None, ang=0., colour=None):
+            kind, ln = (SHAPE_TEXTURE, self.tex_index[look.texture]) if look.texture else (SHAPE[look.shape], look.width)
+            ext = ext if ext is not None else look.extent if look.extent is not None else rad*3.2+8
+            col = colour or look.colour
+            rows.append([p[0], p[1], rad, ext, kind, col[0], col[1], col[2], look.glow*inten, ang+t*look.spin, ln])
         en = sn.enemies; alive = np.asarray(en.alive)
-        if r == int(sn.exit):
+        if r == int(sn.exit):                                                       # the exit pad: grey until the room is clear
             open_ = not alive.any(); pc = M(*c.pad); pulse = .8+.2*math.sin(t*4)
-            add(pc, 18, 1, (.55, 1., .84) if open_ else (.5, .5, .5), pulse if open_ else .6, 34, 0, 3.)
-            if open_: add(pc, 8, 0, (.55, 1., .84), .35*pulse, 40)
-        pk = sn.pickups
-        for i in np.where(pk.alive)[0]: add(M(pk.x[i], pk.y[i]), 11*(1+.08*math.sin(t*4+i)), 3, (1., .36, .45), 1.1, 40)
+            if open_: add(L['pad'], pc, L['pad'].size, pulse); add(L['pad_glow'], pc, L['pad_glow'].size, pulse)
+            else: add(L['pad_closed'], pc, L['pad_closed'].size)
+        pk = sn.pickups; lk = L['pickup']
+        for i in np.where(pk.alive)[0]: add(lk, M(pk.x[i], pk.y[i]), lk.size*(1+lk.pulse*math.sin(t*4+i)))
         for i in np.where(alive)[0]:
-            p = M(en.x[i], en.y[i]); kind = kinds.ENEMY_KINDS[int(en.kind[i])]; rad = kind.radius; tg = float(en.telegraph[i])
-            if tg > 0: add(p, rad+4*tg, 1, (1., 1., 1.), .8, rad*3+10, 0, 1.6)
-            else: add(p, rad, 0, (1., 1., 1.) if en.flash[i] > 0 else tuple(c/255. for c in kind.colour), 1.)
-        for bl, rad, col, inten, ext, ln in ((sn.pb, 3, (1., .89, .48), 1.5, 40, 16.), (sn.eb, 4.5, (1., .54, .82), 1.4, 36, 10.)):
+            p = M(en.x[i], en.y[i]); kind = kinds.ENEMY_KINDS[int(en.kind[i])]; look = T.enemy(kind.name).look
+            rad = look.size or kind.radius; tg = float(en.telegraph[i])
+            if tg > 0: add(L['telegraph'], p, rad+4*tg, ext=rad*3+10)
+            else: add(look, p, rad, colour=T.flash_colour if en.flash[i] > 0 else None)
+        for bl, lk in ((sn.pb, L['player_bullet']), (sn.eb, L['enemy_bullet'])):
             for i in np.where(bl.alive)[0]:
-                vx, vy = view_np(va, mir, bl.vx[i], bl.vy[i]); add(M(bl.x[i], bl.y[i]), rad, 4, col, inten, ext, math.atan2(-vy, -vx), ln)
+                vx, vy = view_np(va, mir, bl.vx[i], bl.vy[i]); add(lk, M(bl.x[i], bl.y[i]), lk.size, ang=math.atan2(-vy, -vx))
         if hunter_shown(sn):
-            add(M(float(sn.hunter.x), float(sn.hunter.y)), HUNTER_R*1.2, 2, (1., 1., 1.) if float(sn.hunter.flash) > 0 else (1., .36, .45), 1.1, HUNTER_R*4, t*.8)
+            lk = L['hunter']; add(lk, M(float(sn.hunter.x), float(sn.hunter.y)), lk.size or HUNTER_R*1.2, ext=lk.extent or HUNTER_R*4,
+                                  colour=T.flash_colour if float(sn.hunter.flash) > 0 else None)
         px = M(float(sn.player.x), float(sn.player.y))
-        if not (float(sn.player.inv) > 0 and int(t*20) % 2):
-            add(px, PLAYER_R, 0, (.8, .9, 1.), .85, 44)
-        ang = float(sn.player.aim); ax, ay = view_np(va, mir, math.cos(ang), math.sin(ang)); add(px, 1.6, 4, (1., .89, .48), 1.2, 40, math.atan2(ay, ax), 20.)
+        if not (float(sn.player.inv) > 0 and int(t*20) % 2):                         # blinks while invulnerable
+            add(L['player'], px, L['player'].size or PLAYER_R)
+        ang = float(sn.player.aim); ax, ay = view_np(va, mir, math.cos(ang), math.sin(ang)); add(L['aim'], px, L['aim'].size, ang=math.atan2(ay, ax))
         return np.array(rows[:NSPR], 'f4').reshape(-1, 11), px
 
     # ---- one frame of the room (everything except the HUD)
-    def scene(self, sn, c, M, va, mir, t, style, fx, now):
+    def scene(self, sn, c, M, va, mir, t, world, fx, now):
+        """world: the WorldLook of this floor (seamjax/theme.py): its floor pattern or image"""
         import pygame
         ctx = self.ctx; self.resize(pygame.display.get_window_size())
         RW, RH = self.size; res = (self.VW, self.VH)
         n, vt, wind, ns, sa, sc = self._geometry(sn, c, M, t); no, oA, oB, oC = self._obstacles(sn, c, M, va, mir); spr, ppos = self._sprites(sn, c, M, va, mir, t)
         self.f_scene.use(); ctx.viewport = (0, 0, RW, RH); ctx.disable(moderngl.BLEND)
-        P = self.p_scene
+        style = FLOOR_TEXTURE if world.texture else themes.FLOORS.index(world.floor)
+        (self.floor_tex[world.texture] if world.texture else self.blank).use(TEX_FLOOR); self.atlas.use(TEX_SPRITE)
+        P = self.p_scene; self._set(P, u_floor=TEX_FLOOR, u_fscale=float(world.texture_scale)); self._set(self.p_spr, u_tex=TEX_SPRITE)
         self._set(P, u_res=res, u_ctr=(CX, CY), u_player=tuple(ppos), u_time=float(t), u_hue=float(c.hue), u_va=float(va), u_mir=float(mir), u_style=int(style), u_nv=int(n), u_wind=float(wind), u_ns=int(ns), u_no=int(no))
         for nm, arr in (('u_vtx', vt), ('u_segA', sa), ('u_segC', sc), ('u_obsA', oA), ('u_obsB', oB), ('u_obsC', oC)): self._arr(P, nm, arr)
         self.quad_vao[P].render(moderngl.TRIANGLE_STRIP)

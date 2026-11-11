@@ -39,12 +39,13 @@ ev = Events(); ev.update(sn, (0, 0), 0, False)
 sn2 = sn.replace(enemies=en.replace(alive=np.where(np.arange(10) == 0, False, en.alive)), player=sn.player.replace(hp=4)); fx.apply(ev.update(sn2, (0, 0), 0, False), M, .1)        # an enemy dies and the player is hit
 assert (fx.part[:, 5] > 0).sum() > 20 and fx.hit > .5 and fx.shake > .5, 'events did not make effects'
 bright = {}
-for style in range(4):
-    gl.scene(sn2, c, M, 0., 1., 1.0, style, fx, .2); img = gl.screenshot(); a = pygame.surfarray.array3d(img).astype(float)
+from seamjax import theme
+for style, floor in enumerate(theme.FLOORS):
+    gl.scene(sn2, c, M, 0., 1., 1.0, theme.WorldLook(floor), fx, .2); img = gl.screenshot(); a = pygame.surfarray.array3d(img).astype(float)
     bright[style] = a.mean(); assert a.max() > 200 and a.std() > 10, 'style %d looks blank' % style
     if style == 1: pygame.image.save(img, out)
-mirror = gl.scene(sn2, c, M, .7, -1., 1.0, 0, fx, .2); gl.screenshot()                                   # mirrored, rotated view must not crash
-cv = GLCanvas(gl); gl.scene(sn2, c, M, 0., 1., 1.0, 0, fx, .2); before = pygame.surfarray.array3d(gl.screenshot()).astype(int)
+mirror = gl.scene(sn2, c, M, .7, -1., 1.0, theme.WorldLook('grid'), fx, .2); gl.screenshot()                                   # mirrored, rotated view must not crash
+cv = GLCanvas(gl); gl.scene(sn2, c, M, 0., 1., 1.0, theme.WorldLook('grid'), fx, .2); before = pygame.surfarray.array3d(gl.screenshot()).astype(int)
 cv.begin(); cv.text('Floor 7  kills 12 -> ok', 20, 20, 22, (255, 255, 255)); cv.text('right', 940, 40, 56, (255, 120, 140), 'r'); cv.rect(20, 560, 200, 20, (255, 92, 115), 6)
 cv.ring(800, 500, 40, (140, 255, 215), 2); cv.ngon(700, 500, 30, 7, (255, 255, 255), 1); cv.line((600, 450), (680, 560), (255, 200, 90), 3); cv.disk(500, 560, 8, (90, 150, 255, 120)); cv.end()
 after = pygame.surfarray.array3d(gl.screenshot()).astype(int); diff = np.abs(after-before).sum(2)

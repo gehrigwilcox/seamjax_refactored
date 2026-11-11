@@ -2,16 +2,19 @@
 Generative sound for Seam.  Every sound is synthesised by JAX (on the GPU when there is one) from a few formulas: sweeps,
 noise, FM bells, detuned oscillators and a one-pole filter.  Nothing is recorded.
 
-  bank()          -> {name: float32 [variants, samples]} one-shot effects, each with a few random variants so repeats differ
-  loops()         -> {name: float32 [samples]}  seamless 4 s drones, one per world type (flat / hyper / sphere / grid), and a heartbeat
-  Audio           plays them through pygame.mixer: events (events.py) trigger effects, the world type picks the drone and the
-                  Hunter's distance sets the heartbeat volume.  Synthesis runs in a background thread so the window opens at once.
+  ONE_SHOTS       name -> generator(key) of a one-shot effect; NVAR random variants each, so repeats differ
+  LOOPS           name -> generator() of a seamless loop: a 4 s drone per world type, and a heartbeat
+  Audio           plays what the theme (seamjax/theme.py) asks for, generated here or loaded from sound files: events
+                  (events.py) trigger effects, the world type picks the drone, the Hunter's distance sets the heartbeat volume.
+                  Synthesis runs in a background thread so the window opens at once.
+
+A new generated sound = a function here registered in ONE_SHOTS or LOOPS, then named in the theme as Sound(synth=...).
 """
 import threading
 import numpy as np
 import jax, jax.numpy as jnp
 from jax import lax
-from seamjax.core import kinds
+from seamjax import theme as themes
 
 SR = 22050; TAU = 2*np.pi; LOOP = 4.0; NVAR = 3
 
@@ -81,9 +84,10 @@ ONE_SHOTS = dict(shoot=shoot, kill_shooter=lambda k: kill(k, True), kill_charger
                  death=death, hunter_hit=hunter_hit, hunter_die=hunter_die, open=wall_open, descend=descend)
 
 
-def bank(seed=0):
+def bank(seed=0, names=None):
+    """{name: float32 [NVAR, samples]} for the one-shots named (all by default)"""
     keys = jax.random.split(jax.random.PRNGKey(seed), NVAR)
-    return {n: np.asarray(jax.jit(jax.vmap(f))(keys)) for n, f in ONE_SHOTS.items()}
+    return {n: np.asarray(jax.jit(jax.vmap(ONE_SHOTS[n]))(keys)) for n in (names or ONE_SHOTS)}
 
 
 # ---- loops: every frequency is a whole number of cycles per LOOP seconds, so the loop has no seam
@@ -96,61 +100,72 @@ def drone(parts, lfo=1, gate=0):
     if gate: out = out*(.55+.45*jnp.maximum(0., jnp.sin(TAU*gate*t/LOOP))**2)
     return _norm(out, .5)
 
-WORLD_DRONES = {                                                           # in the order of cat: flat, hyper, sphere, grid
-    'flat': lambda: drone([(55, .5, 0), (82.5, .3, 1), (110, .15, 2), (165, .06, 0)], lfo=1),
-    'hyper': lambda: drone([(41.25, .5, 0), (41.75, .5, 0), (62, .25, 1), (124.25, .1, 2)], lfo=2),          # beating pair: restless
-    'sphere': lambda: drone([(196, .3, 0), (294, .25, 1), (392, .15, 2), (98, .35, 0)], lfo=2),               # airy and high
-    'grid': lambda: drone([(73.5, .5, 0), (147, .25, 1), (220.5, .1, 2)], lfo=1, gate=4),                      # pulsing
-}
-
 def heartbeat():
     t = _t(1.0); lub = jnp.sin(TAU*58*t)*jnp.exp(-30*t); d = t-.27; dub = jnp.where(d >= 0, jnp.sin(TAU*48*d)*jnp.exp(-34*jnp.maximum(d, 0)), 0.)
     return _norm(lub+.8*dub, .9)
 
-def loops():
-    out = {k: np.asarray(jax.jit(f)()) for k, f in WORLD_DRONES.items()}; out['heartbeat'] = np.asarray(jax.jit(heartbeat)()); return out
+LOOPS = {
+    'drone_flat': lambda: drone([(55, .5, 0), (82.5, .3, 1), (110, .15, 2), (165, .06, 0)], lfo=1),
+    'drone_hyper': lambda: drone([(41.25, .5, 0), (41.75, .5, 0), (62, .25, 1), (124.25, .1, 2)], lfo=2),        # beating pair: restless
+    'drone_sphere': lambda: drone([(196, .3, 0), (294, .25, 1), (392, .15, 2), (98, .35, 0)], lfo=2),             # airy and high
+    'drone_grid': lambda: drone([(73.5, .5, 0), (147, .25, 1), (220.5, .1, 2)], lfo=1, gate=4),                    # pulsing
+    'heartbeat': heartbeat,
+}
+
+def loops(names=None):
+    """{name: float32 [samples]} for the loops named (all by default)"""
+    return {n: np.asarray(jax.jit(LOOPS[n])()) for n in (names or LOOPS)}
 
 
 class Audio:
-    CATS = ['flat', 'hyper', 'sphere', 'grid']
-    MAP = dict(shoot='shoot', heal='heal', hit='hit', death='death', hunter_hit='hunter_hit', hunter_die='hunter_die', open='open', descend='descend')
-
-    def __init__(self, volume=.7):
+    """plays the theme's sounds: generated ones (synthesised once, in a background thread) and sound files"""
+    def __init__(self, volume=.7, theme=None):
         import pygame
-        self.pg = pygame; self.ready = False; self.volume = volume; self.sounds = {}; self.cat = None; self.beat = None; self.err = None
+        self.pg = pygame; self.ready = False; self.volume = volume; self.theme = theme or themes.THEME
+        self.shots = {}; self.loops = {}; self.cat = None; self.ch = None; self.beat = None; self.err = None
         pygame.mixer.pre_init(SR, -16, 2, 512)
         try: pygame.mixer.init(frequency=SR, size=-16, channels=2, buffer=512, allowedchanges=0); pygame.mixer.set_num_channels(24); self.ok = True
         except Exception as ex: self.ok = False; self.err = str(ex); return
-        self.ready_evt = threading.Event(); threading.Thread(target=self._build, daemon=True).start()
+        threading.Thread(target=self._build, daemon=True).start()
 
     def _snd(self, x):
         a = np.clip(x, -1, 1)*32000; return self.pg.sndarray.make_sound(np.ascontiguousarray(np.stack([a, a], 1).astype(np.int16)))
 
+    def _files(self, s):
+        return [self.pg.mixer.Sound(themes.asset(f)) for f in ((s.file,) if isinstance(s.file, str) else s.file)]
+
     def _build(self):
         try:
-            B = bank(); L = loops(); self.sounds = {k: [self._snd(v) for v in vs] for k, vs in B.items()}; self.loops = {k: self._snd(v) for k, v in L.items()}
-            self.beat = self.loops['heartbeat'].play(-1); self.beat.set_volume(0.); self.ready = True; self._world()
+            shots, loops_ = self.theme.sounds()
+            gen = bank(names=sorted({s.synth for s in shots if s.synth})); L = loops(sorted({s.synth for s in loops_ if s.synth}))
+            self.shots = {s: (self._files(s) if s.file else [self._snd(v) for v in gen[s.synth]]) for s in shots}
+            self.loops = {s: (self._files(s)[0] if s.file else self._snd(L[s.synth])) for s in loops_}
+            if self.theme.heartbeat: self.beat = self.loops[self.theme.heartbeat].play(-1); self.beat.set_volume(0.)
+            self.ready = True; self._world()
         except Exception as ex: self.err = repr(ex)
 
     def _world(self):
-        if self.ready and self.cat is not None:
-            if getattr(self, 'ch', None): self.ch.fadeout(500)
-            self.ch = self.loops[self.cat].play(-1, fade_ms=800); self.ch.set_volume(.32*self.volume)
+        w = self.theme.worlds.get(self.cat)
+        if self.ready and w is not None and w.drone:
+            if self.ch: self.ch.fadeout(500)
+            self.ch = self.loops[w.drone].play(-1, fade_ms=800)
+            if self.ch: self.ch.set_volume(.32*self.volume*w.drone.volume)
 
     def set_world(self, cat):
+        """cat: the world kind (flat / hyper / sphere / grid) -> its drone"""
         if cat != self.cat: self.cat = cat; self._world()
 
     def set_hunter(self, hdist):
         """heartbeat gets louder as the Hunter gets closer (hdist = doors away; <0 means none)"""
         if self.ready and self.beat is not None: self.beat.set_volume(self.volume*(0. if hdist < 0 else max(0., 1-hdist/6.)**1.6*.8))
 
-    def play(self, name, pan=0., vol=1., rng=np.random):
-        if not (self.ok and self.ready): return
-        s = self.sounds[name][rng.randint(NVAR)]; ch = s.play()
-        if ch: l, r = (1-max(0., pan)*.7, 1+min(0., pan)*.7); ch.set_volume(vol*self.volume*l, vol*self.volume*r)
+    def play(self, sound, pan=0., rng=np.random):
+        if not (self.ok and self.ready) or sound not in self.shots: return
+        v = self.shots[sound]; ch = v[rng.randint(len(v))].play(); vol = sound.volume*self.volume
+        if ch: l, r = (1-max(0., pan)*.7, 1+min(0., pan)*.7); ch.set_volume(vol*l, vol*r)
 
     def events(self, evs, pan_of):
         """evs from events.Events; pan_of(x, y) -> -1..1 (left..right on the screen)"""
         for e in evs:
-            n = e['name']; name = kinds.ENEMY_KINDS[e['kind']].kill_sound if n == 'kill' else self.MAP.get(n)
-            if name: self.play(name, pan_of(e['x'], e['y']) if n not in ('hit', 'death', 'descend', 'open') else 0., .6 if n == 'shoot' else 1.)
+            s = self.theme.effect(e).sound
+            if s: self.play(s, pan_of(e['x'], e['y']) if s.pan else 0.)

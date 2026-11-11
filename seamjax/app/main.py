@@ -12,7 +12,6 @@ import numpy as np
 from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, CX, CY
 
 DT = 1/60.
-STYLE = {'flat': 0, 'hyper': 1, 'sphere': 2, 'grid': 3}             # floor shader per world kind
 
 
 def parse(argv):
@@ -148,7 +147,8 @@ class App:
             self.audio.set_world(world['cat']); self.audio.set_hunter(-1 if self.dead else int(sn.hunter_dist))
         if d.gl:
             now = time.time()-self.t_start; d.fx.apply(evs, M, now); d.fx.decay(now-self.fx_t); self.fx_t = now
-            d.gl.scene(sn, room, M, va, mir, self.t, STYLE[world['cat']], d.fx, now)
+            from seamjax import theme
+            d.gl.scene(sn, room, M, va, mir, self.t, theme.THEME.worlds[world['cat']], d.fx, now)
         else:
             from seamjax.app.software import draw_room
             draw_room(d.screen, sn, room, M, self.t)

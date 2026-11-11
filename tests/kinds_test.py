@@ -4,7 +4,7 @@ Here a third kind (a big, slow, tough brute that makes up a third of the spawns)
 its own hp and radius, keeps the other kinds' shares, moves it, and it shows up in the observation as not ranged."""
 import numpy as np, jax, jax.numpy as jnp
 from seamjax.core import kinds
-BRUTE = kinds.EnemyKind('brute', radius=20., hp=8., behaviour=kinds.CHASE, speed=40., share=(1/3, 0., 1/3, 1/3), colour=(120, 220, 120))
+BRUTE = kinds.EnemyKind('brute', radius=20., hp=8., behaviour=kinds.CHASE, speed=40., share=(1/3, 0., 1/3, 1/3))
 kinds.ENEMY_KINDS = kinds.ENEMY_KINDS + (BRUTE,)                       # before anything is traced
 from seamjax.difficulty import difficulty
 from seamjax.sim.game import Game

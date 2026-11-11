@@ -10,9 +10,9 @@ import os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 here = os.path.dirname(os.path.abspath(__file__))
 # slowest first, so the long ones start right away
-ALL = ['gym_test.py', 'wall_test.py', 'hunter_test.py', 'specs_test.py', 'regen_test.py', 'difficulty_test.py', 'gen_loops.py', 'golden_test.py', 'kinds_test.py',
+ALL = ['gym_test.py', 'wall_test.py', 'hunter_test.py', 'specs_test.py', 'regen_test.py', 'difficulty_test.py', 'gen_loops.py', 'golden_test.py', 'kinds_test.py', 'theme_test.py',
        'spawn_test.py', 'gen_test.py', 'minimap_test.py', 'audio_test.py', 'backend_test.py', 'gl_test.py']
-QUICK = ['golden_test.py', 'spawn_test.py', 'gen_test.py', 'minimap_test.py', 'audio_test.py', 'backend_test.py', 'gl_test.py']
+QUICK = ['golden_test.py', 'spawn_test.py', 'gen_test.py', 'minimap_test.py', 'audio_test.py', 'backend_test.py', 'gl_test.py', 'theme_test.py']
 args = sys.argv[1:]
 jobs = int(args[args.index('-j')+1]) if '-j' in args else 4
 names = [n for n in (QUICK if '--quick' in args else ALL) if os.path.exists(os.path.join(here, n))]
