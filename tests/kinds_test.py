@@ -13,8 +13,9 @@ from seamjax.sim.systems.transit import transit
 from seamjax.sim.systems.enemies import radius
 from seamjax.sim.observe import observe
 
-mix = np.array(difficulty(8)['enemy_mix']); print('enemy mix on floor 8 (chaser, shooter, brute):', mix.round(3))
-assert mix.shape == (3,) and abs(mix.sum()-1) < 1e-6 and abs(mix[2]-1/3) < 1e-6 and abs(mix[1]-float(np.clip(.12+.03*7, .12, .45))) < 1e-6
+K = len(kinds.ENEMY_KINDS); IB = K-1                                                     # the brute's index
+mix = np.array(difficulty(8)['enemy_mix']); print('enemy mix on floor 8 (%s):' % ', '.join(k.name for k in kinds.ENEMY_KINDS), mix.round(3))
+assert mix.shape == (K,) and abs(mix.sum()-1) < 1e-6 and abs(mix[IB]-1/3) < 1e-6 and abs(mix[1]-float(np.clip(.12+.03*7, .12, .45))) < 1e-6
 
 G = Game.generated(); B = 64
 S = jax.jit(jax.vmap(G.reset))(jax.random.split(jax.random.PRNGKey(5), B), jnp.full(B, 8))
@@ -28,11 +29,11 @@ def enter(s):
     return s2, s2.enemies[s2.room], radius(s2.enemies[s2.room]), observe(s2)
 S2, en, rad, obs = enter(S)
 alive = np.array(en.alive); kind = np.array(en.kind)[alive]; hp = np.array(en.hp)[alive]; r = np.array(rad)[alive]
-counts = np.bincount(kind, minlength=3); print('spawned by kind:', counts)
-assert counts[2] > 0 and counts[0] > 0, 'every kind spawns'
+counts = np.bincount(kind, minlength=K); print('spawned by kind:', counts)
+assert counts[IB] > 0 and counts[0] > 0, 'the brute and the chaser spawn'
 table = kinds.table()
 assert (hp == table.hp[kind]).all() and (r == table.radius[kind]).all(), 'hp and radius come from the table'
-assert abs(counts[2]/counts.sum() - 1/3) < .12, 'the brute share is about a third'
+assert abs(counts[IB]/counts.sum() - 1/3) < .12, 'the brute share is about a third'
 
 # the brute moves (CHASE) and is solid; and in the observation it counts as not ranged
 @jax.jit
@@ -42,7 +43,7 @@ def run(S):
         return jax.vmap(lambda s: G.step(s, jnp.zeros(4))[0])(S), None
     return jax.lax.scan(body, S, None, length=120)[0]
 S3 = run(S2)
-moved = np.array(S3.enemies.x[np.arange(B), S3.room] != S2.enemies.x[np.arange(B), S2.room]) & np.array(S3.enemies.kind[np.arange(B), S3.room] == 2)
+moved = np.array(S3.enemies.x[np.arange(B), S3.room] != S2.enemies.x[np.arange(B), S2.room]) & np.array(S3.enemies.kind[np.arange(B), S3.room] == IB)
 assert moved.any(), 'brutes move'
 assert np.isfinite(np.array(obs)).all()
 ef = np.array(obs)[:, 8+12*8:8+12*8+40].reshape(B, 8, 5)                # nearest enemies: present, x, y, ranged, hp/4

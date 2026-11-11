@@ -51,7 +51,12 @@ class EnemyKind:
 CHASER = EnemyKind('chaser', radius=12., hp=3., behaviour=CHASE, speed=70., speed_per_floor=7.)
 SHOOTER = EnemyKind('shooter', radius=14., hp=4., behaviour=SKIRMISH, speed=55., ranged=True, share=(.12, .03, .12, .45))
 
-ENEMY_KINDS = (CHASER, SHOOTER)
+STALKER = EnemyKind('stalker', radius=11., hp=3., behaviour=CHASE, speed=80., speed_per_floor=5., share=(-.06, .02, 0., .12),
+                    follows=True, route=DIRECT, hop=1.6, follow_delay=.8)                 # comes after you, straight; from floor 5
+FLANKER = EnemyKind('flanker', radius=12., hp=4., behaviour=SKIRMISH, speed=60., ranged=True, share=(-.1, .02, 0., .1),
+                    follows=True, route=FLANK, hop=1.3, follow_delay=.5)                  # comes round to another door; from floor 7
+
+ENEMY_KINDS = (CHASER, SHOOTER, STALKER, FLANKER)
 
 
 def table(kinds=None):

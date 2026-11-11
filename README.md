@@ -129,7 +129,7 @@ obs, reward, terminated, truncated, info = venv.step(actions)    # actions (num_
 * Not every wall has a door. Some rooms have an inner wall: solid (permanent) or gated (opens when you clear your side).
   A solid wall splits a room into two places that are only joined through the rest of the world.
 * The Hunter always takes the true shortest route through the world (section by section), warns at the door it will use,
-  can be shot, and comes back.
+  can be shot, and comes back. From floor 5, followers come after you too (stalkers straight, flankers round to another door).
 * Health pickups: enemies sometimes drop one where they die (rate rises slowly with depth), walk over it to heal.
 
 ## Difficulty (difficulty.py)
@@ -159,6 +159,10 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
   Gymnasium: `gym.make('Seam-v0', player_class='blade')` or `reset(options={'class': 'blade'})`. A class is a speed, a max hp
   and a `Weapon` row (fire rate, bullet speed and life, damage, pellets and spread, pierce, ghost, melee reach and arc), so a
   new class or weapon is a new row. The observation does not say which class you play (train one class per agent, for now).
+* Followers (`core/kinds.py`: `follows`, `route`, `hop`, `follow_delay`; `sim/systems/roamers.py`): when you leave a room, its
+  followers leave with you and travel the dungeon as roamers, then come in through a door (warned in orange) as ordinary
+  enemies. Routes: direct, flank (comes in by another door than you did) and detour. Two follower kinds: the stalker (a fast
+  chaser, direct; from floor 5) and the flanker (a ranged skirmisher, flank; from floor 7).
 * Adding an enemy kind: one more `EnemyKind` row in `seamjax/core/kinds.py` (and, for a new way of moving, one more behaviour in
   `sim/systems/enemies.py`). The simulation, observation, renderers and sound all read that table; `tests/kinds_test.py` adds one.
 * The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
