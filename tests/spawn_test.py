@@ -24,5 +24,6 @@ for i in range(B):
                 a,cap,dmin,minD,_=probe(s,jnp.int32(r),jnp.int32(k)); n+=1; counts.append(int(a))
                 over+=int(a>cap); close+=int(float(dmin)<.6*float(minD)-1e-3); zero+=int(a==0)
 print('room entries',n,'over capacity',over,'enemy closer than 0.6*minD',close,'rooms with no enemies',zero,'mean enemies',np.mean(counts))
+print('over', over, 'close', close, 'zero', zero, 'of', n)
 assert over==0 and close==0 and zero<.05*n
 print('PASS')

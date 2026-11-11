@@ -50,7 +50,7 @@ Health drops rise slowly with depth (14% to 24%) to offset the pressure.
 ## Technical and RL requirements
 
 - **Clean code, no special-casing.** One geometry core; behaviours follow from it.
-- **JAX simulation** that can run thousands of games at once on a GPU (about 61k steps/s on a laptop CPU; about 900k on a GTX 1660 SUPER with 8192 games).
+- **JAX simulation** that can run thousands of games at once on a GPU (about 61k steps/s on a laptop CPU; about 620k on a GTX 1660 SUPER with 8192 games).
 - **Everything generated on the device:** the tiling tables (built once by a jitted program, ~4 s, on the CPU because it is sequential float64 work) and every dungeon (layout, loops, room shapes, walls, gating, spawn points, exit).
 - **Fidelity to the prototype:** the JAX simulation matches the original JS game frame for frame (288,000 frames, no mismatches).
 - **Backends:** CPU, NVIDIA CUDA, AMD ROCm and Apple Metal through uv extras (`uv sync --extra cuda|cuda12|rocm|metal`), chosen automatically at start-up (`seamjax/backend.py`; `--device` / `SEAM_BACKEND` to force one). CPU and CUDA (GTX 1660 SUPER) are tested; ROCm and Metal are untested.

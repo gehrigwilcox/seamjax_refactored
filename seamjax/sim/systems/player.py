@@ -36,11 +36,11 @@ def shoot(s, action, dt):
     shoot = firing & (fire <= 0)
     fire = jnp.where(shoot, w('delay'), fire)
     melee = w('melee'); n = w('pellets'); spread = w('spread'); muzzle = w('muzzle'); speed = w('speed')
-    pb = s.pb
-    for p in range(max(c.weapon.pellets for c in kinds.PLAYER_CLASSES)):
-        a = aim + jnp.where(n > 1, spread*(p/jnp.maximum(n-1, 1) - .5), 0.)          # pellet p of n, evenly over the fan
-        new = bullet(P.x+jnp.cos(a)*muzzle, P.y+jnp.sin(a)*muzzle, jnp.cos(a)*speed, jnp.sin(a)*speed, w('life'), w('damage'), w('pierce'), w('ghost'))
-        pb = pool.spawn(pb, new, shoot & ~melee & (p < n))
+    p = jnp.arange(max(c.weapon.pellets for c in kinds.PLAYER_CLASSES)); one = jnp.ones(p.shape[0])
+    a = aim + jnp.where(n > 1, spread*(p/jnp.maximum(n-1, 1) - .5), 0.)                # pellet p of n, evenly over the fan
+    new = bullet(P.x+jnp.cos(a)*muzzle, P.y+jnp.sin(a)*muzzle, jnp.cos(a)*speed, jnp.sin(a)*speed, one*w('life'), one*w('damage'),
+                 (one*w('pierce')).astype(jnp.int32), one*w('ghost') > 0).replace(alive=shoot & ~melee & (p < n), hits=jnp.zeros(p.shape[0], jnp.int32))
+    pb, _ = pool.place(s.pb, new)
     pb = fly(pb, dt, w('radius'), *room_geom(s, s.room))
     swung = shoot & melee
     swing = jnp.where(swung, SWING_SHOW, jnp.maximum(P.swing-dt, 0.))

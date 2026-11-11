@@ -6,7 +6,7 @@ from seamjax.sim.game import Game
 from seamjax.sim.step import step, combat
 from seamjax.sim.state import no_events
 from seamjax.sim.observe import observe
-from seamjax.sim.systems import hunter, player, transit, enemies, projectiles, pickups, rooms
+from seamjax.sim.systems import hunter, player, transit, enemies, projectiles, pickups, rooms, roamers, bosses
 
 B = int(sys.argv[1]) if len(sys.argv) > 1 else 2048; T = 200; dt = 1/60.
 G = Game.generated()
@@ -17,13 +17,16 @@ ev0 = no_events()
 parts = {
     'full step': lambda s, a: step(s, a)[0],
     'hunter.tick': lambda s, a: hunter.tick(s, ev0, dt)[0],
+    'roamers.tick': lambda s, a: roamers.tick(s, ev0, dt)[0],
     'player.move': lambda s, a: player.move(s, a, dt)[0],
     'transit (+spawn)': lambda s, a: transit.transit(s, ev0, jnp.int32(0))[0],
+    'roamers.depart': lambda s, a: roamers.depart(s, s.room, jnp.int32(0)),
     'enemies.spawn': lambda s, a: enemies.spawn(s, s.key, 0),
     'combat (all)': lambda s, a: combat(s, ev0, a, dt)[0],
-    'player.shoot': lambda s, a: player.shoot(s, a, dt),
+    'player.shoot': lambda s, a: player.shoot(s, a, dt)[0],
     'player_bullet_hits': lambda s, a: projectiles.player_bullet_hits(s, ev0, dt)[0],
     'enemies.shoot': lambda s, a: enemies.shoot(s, s.key, dt),
+    'bosses.tick': lambda s, a: bosses.tick(s, dt),
     'enemies.move': lambda s, a: enemies.move(s, dt)[0],
     'enemy_bullets': lambda s, a: projectiles.enemy_bullets(s, dt)[0],
     'pickups.drop+take': lambda s, a: pickups.take(pickups.drop(s, s.enemies.alive[s.room], s.key), ev0)[0],

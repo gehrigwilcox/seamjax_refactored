@@ -17,7 +17,6 @@ A roamer one door away warns at that door, as the Hunter does.
 Randomness is folded from the step key without advancing it, so a game without followers plays exactly as before.
 """
 import jax, jax.numpy as jnp
-from jax import lax
 from seamjax.core import kinds, pool
 from seamjax.core.config import MAX_SIDES as NS, MAX_ENEMIES as NE, INF, ARRIVE_TELEGRAPH, FOLLOW_STAGGER, HUNTER_DOOR_INSET
 from seamjax.core.types import Roamers, Enemies
@@ -39,18 +38,15 @@ def _waypoint(dun, route, room, sec, p, key):
 
 
 def depart(s, room, target):
-    """you are leaving `room` for node `target`: its followers set off after you"""
-    dun = s.dun; en = s.enemies[room]; follows = of('follows', en.kind) & en.alive; route = of('route', en.kind)
-    def one(i, c):
-        alive, R, order = c
-        f = pool.first_free(R); go = follows[i] & ~R.alive[f]
-        sec = sec_point(dun, room, en.x[i], en.y[i])
-        way = _waypoint(dun, route[i], room, sec, target, jax.random.fold_in(s.key, 101+i))
-        new = Roamers(alive=True, kind=en.kind[i], hp=en.hp[i], room=room, sec=sec, timer=of('follow_delay', en.kind[i])+FOLLOW_STAGGER*order, way=way)
-        R = jax.tree_util.tree_map(lambda a, b: jnp.where(go, a, b), pool.put(R, f, new), R)
-        return alive.at[i].set(alive[i] & ~go), R, order+go.astype(jnp.int32)
-    alive, R, _ = lax.fori_loop(0, NE, one, (en.alive, s.roamers, jnp.int32(0)))
-    return s.replace(roamers=R, enemies=pool.set_row(s.enemies, room, en.replace(alive=alive)))
+    """you are leaving `room` for node `target`: its followers set off after you, one after another"""
+    dun = s.dun; en = s.enemies[room]; follows = of('follows', en.kind) & en.alive; i = jnp.arange(NE)
+    sec = sec_point(dun, room, en.x, en.y)
+    way = jax.vmap(lambda r, sc, j: _waypoint(dun, r, room, sc, target, jax.random.fold_in(s.key, 101+j)))(of('route', en.kind), sec, i)
+    rank = jnp.cumsum(follows)-follows                                            # how many followers leave before this one
+    new = Roamers(alive=follows, kind=en.kind, hp=en.hp, room=jnp.full(NE, room, jnp.int32), sec=sec,
+                  timer=of('follow_delay', en.kind)+FOLLOW_STAGGER*rank, way=way)
+    R, gone = pool.place(s.roamers, new)
+    return s.replace(roamers=R, enemies=pool.set_row(s.enemies, room, en.replace(alive=en.alive & ~gone)))
 
 
 def _hop(dun, room, sec, way, pn):
@@ -77,15 +73,12 @@ def tick(s, ev, dt):
     R, by_door, side = jax.vmap(lambda r: _move(dun, pn, dt, r))(s.roamers)
     here = R.alive & (hnode(dun, R.room, R.sec) == pn)
     side = jnp.where(by_door, side, entry_side(dun, room, pn))                                   # walked into its room: a door of your section
-    def come_in(i, c):
-        R, en = c
-        f = pool.first_free(en); go = here[i] & ~en.alive[f]
-        door, nrm = dun.sides.door[room, side[i]], dun.sides.normal[room, side[i]]
-        new = Enemies(x=door[0]-nrm[0]*HUNTER_DOOR_INSET, y=door[1]-nrm[1]*HUNTER_DOOR_INSET, hp=R.hp[i], kind=R.kind[i],
-                      fire=of('first_shot', R.kind[i]), telegraph=ARRIVE_TELEGRAPH, flash=0., alive=True, phase=0, ptimer=0.)
-        en = jax.tree_util.tree_map(lambda a, b: jnp.where(go, a, b), pool.put(en, f, new), en)
-        return R.replace(alive=R.alive.at[i].set(R.alive[i] & ~go)), en
-    R, en = lax.fori_loop(0, R.alive.shape[0], come_in, (R, s.enemies[room]))
+    door, nrm = dun.sides.door[room, side], dun.sides.normal[room, side]
+    z = jnp.zeros_like(R.hp)
+    new = Enemies(x=door[:, 0]-nrm[:, 0]*HUNTER_DOOR_INSET, y=door[:, 1]-nrm[:, 1]*HUNTER_DOOR_INSET, hp=R.hp, kind=R.kind, fire=of('first_shot', R.kind),
+                  telegraph=z+ARRIVE_TELEGRAPH, flash=z, alive=here, phase=jnp.zeros_like(R.kind), ptimer=z)
+    en, came = pool.place(s.enemies[room], new)                                    # they come in one after another, while there is room
+    R = R.replace(alive=R.alive & ~came)
     return s.replace(roamers=R, enemies=pool.set_row(s.enemies, room, en)), ev
 
 

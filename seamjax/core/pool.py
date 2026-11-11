@@ -32,3 +32,17 @@ def fill(pool, new):
 def set_row(pools, r, rows):
     """pools with a leading per-room axis: replace room r's pool by `rows`"""
     return jax.tree_util.tree_map(lambda a, v: a.at[r].set(v), pools, rows)
+
+
+def place(pool, rows):
+    """put the alive rows of `rows` (a pool-shaped batch of any length) into the free slots of `pool`, in order: exactly what
+    spawning them one after another would do (the k-th alive row goes into the k-th free slot; rows beyond the free slots are
+    dropped), in one step instead of a loop. Returns (pool, which rows were placed)"""
+    n = pool.alive.shape[0]; m = rows.alive.shape[0]; k = min(n, m)
+    ro = argsort_small(~rows.alive)                                   # alive rows first, in their order
+    srt = jax.tree_util.tree_map(lambda a: a[ro], rows)
+    sl = argsort_small(pool.alive)[:k]                                # free slots first, in slot order
+    ok = ~pool.alive[sl] & srt.alive[:k]
+    out = jax.tree_util.tree_map(lambda o, v: o.at[sl].set(jnp.where(ok.reshape((-1,)+(1,)*(o.ndim-1)), v[:k], o[sl])), pool, srt)
+    placed = jnp.zeros(m, bool).at[ro[:k]].set(ok)
+    return out, placed

@@ -163,6 +163,10 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
   followers leave with you and travel the dungeon as roamers, then come in through a door (warned in orange) as ordinary
   enemies. Routes: direct, flank (comes in by another door than you did) and detour. Two follower kinds: the stalker (a fast
   chaser, direct; from floor 5) and the flanker (a ranged skirmisher, flank; from floor 7).
+* Bosses (`core/kinds.py`: `boss_every`, `hp_per_floor`, `phases`; `sim/systems/bosses.py`): a boss spawns in the exit room on
+  its floors, so the stairs wait until it is down; its phase follows its hp (never back), and each phase sets how it moves
+  and its volley (`count` bullets over `spread`: an aimed fan, a ring, a spinning spiral). The Warden comes every 5th floor:
+  aimed fans while keeping its distance, then turning rings while standing, then a charging spiral. A health bar shows it.
 * Adding an enemy kind: one more `EnemyKind` row in `seamjax/core/kinds.py` (and, for a new way of moving, one more behaviour in
   `sim/systems/enemies.py`). The simulation, observation, renderers and sound all read that table; `tests/kinds_test.py` adds one.
 * The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
@@ -173,7 +177,7 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
 * `tests/reference/` records dungeons and scripted walks from the original JS game to check frame-for-frame agreement
   (`python tests/reference/export_pool.py path/to/index.html`, then `python tests/reference/parity.py`). Not needed to play or train.
 * Speed (batched, `python tools/bench.py 512 2048 8192`): about 60k simulation steps per second on a laptop CPU; on a GTX 1660 SUPER
-  about 320k with 512 games, 720k with 2048 and 900k with 8192. Tiny per-game sorts are done by `core/ops.argsort_small`:
+  about 510k with 2048 games and 620k with 8192 (720k / 900k before classes, followers and bosses). Tiny per-game sorts are done by `core/ops.argsort_small`:
   `jnp.argsort` of a 10-element row costs ~1.8 ms per batched call on that GPU and was half of every step.
 * Memory: building one dungeon needs about 4 MB of scratch, so dungeons are generated 64 at a time and only for games that
   just finished (`SEAM_GEN_CHUNK=256` on a big GPU for faster resets). 4096 parallel games need under 1 GB in total.

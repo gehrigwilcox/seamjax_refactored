@@ -9,8 +9,8 @@ One boss per room fires at a time (the first in slot order). With no boss kinds 
 """
 import jax.numpy as jnp
 from seamjax.difficulty import FLOOR_CAP
-from seamjax.core import kinds, pool, struct
-from seamjax.core.config import MAX_ENEMY_BULLETS as NEB, PHASE_PAUSE
+from seamjax.core import kinds, pool
+from seamjax.core.config import PHASE_PAUSE
 from seamjax.core.types import Bullets
 from seamjax.sim.systems.enemies import of, active, radius
 
@@ -39,11 +39,12 @@ def tick(s, dt):
     b = jnp.argmax(want); go = jnp.any(want)
     count = col('count')[b]; spread = col('spread')[b]; bx, by = en.x[b], en.y[b]
     base = jnp.where(col('aimed')[b], jnp.arctan2(s.player.y-by, s.player.x-bx), ptimer[b]*col('spin')[b])
-    j = jnp.arange(NEB)
+    NV = max(ph.count for _, k in kinds.bosses() for ph in k.phases)                # the largest volley
+    j = jnp.arange(NV)
     ring = spread >= 2*jnp.pi-1e-3
     a = base + jnp.where(ring, 2*jnp.pi*j/jnp.maximum(count, 1), jnp.where(count > 1, spread*(j/jnp.maximum(count-1, 1)-.5), 0.))
     v, r = col('bullet_speed')[b], radius(en)[b]
-    z = jnp.zeros(NEB); i0 = jnp.zeros(NEB, jnp.int32)
-    volley = Bullets(x=bx+jnp.cos(a)*r, y=by+jnp.sin(a)*r, vx=jnp.cos(a)*v, vy=jnp.sin(a)*v, life=jnp.full(NEB, col('bullet_life')[b]),
-                     alive=go & (j < count), damage=z+1., pierce=i0, ghost=jnp.zeros(NEB, bool), hits=i0)
-    return s.replace(eb=struct.where(go, pool.fill(s.eb, volley), s.eb))
+    z = jnp.zeros(NV); i0 = jnp.zeros(NV, jnp.int32)
+    volley = Bullets(x=bx+jnp.cos(a)*r, y=by+jnp.sin(a)*r, vx=jnp.cos(a)*v, vy=jnp.sin(a)*v, life=jnp.full(NV, col('bullet_life')[b]),
+                     alive=go & (j < count), damage=z+1., pierce=i0, ghost=jnp.zeros(NV, bool), hits=i0)
+    return s.replace(eb=pool.place(s.eb, volley)[0])

@@ -182,6 +182,8 @@ THEME = Theme(
         shooter=EnemyLook(Look((.71, .49, 1.)), _kill((.71, .49, 1.), 'kill_shooter')),
         stalker=EnemyLook(Look((.35, .95, .75)), _kill((.35, .95, .75), 'kill_charger')),
         flanker=EnemyLook(Look((1., .8, .3), 'pentagon', size=12.), _kill((1., .8, .3), 'kill_shooter')),
+        warden=EnemyLook(Look((1., .45, .85), 'pentagon', glow=.75, spin=.3),
+                         Effect(Sound(synth='hunter_die'), (Burst(90, (1., .45, .85), 340, 1.2, 9), Burst(30, (1., 1., 1.), 220, .6, 5)), shake=1.2, flash=.7)),
     ),
     worlds=dict(
         flat=WorldLook('grid', drone=Sound(synth='drone_flat')),

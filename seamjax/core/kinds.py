@@ -77,7 +77,14 @@ STALKER = EnemyKind('stalker', radius=11., hp=3., behaviour=CHASE, speed=80., sp
 FLANKER = EnemyKind('flanker', radius=12., hp=4., behaviour=SKIRMISH, speed=60., ranged=True, share=(-.1, .02, 0., .1),
                     follows=True, route=FLANK, hop=1.3, follow_delay=.5)                  # comes round to another door; from floor 7
 
-ENEMY_KINDS = (CHASER, SHOOTER, STALKER, FLANKER)
+TAU = 2*np.pi
+WARDEN = EnemyKind('warden', radius=34., hp=60., hp_per_floor=4., behaviour=SKIRMISH, speed=45., boss_every=5, share=(0., 0., 0., 0.), phases=(
+    Phase(1., SKIRMISH, speed=45., count=5, spread=.7, aimed=True, interval=1.3, bullet_speed=210.),            # keeps its distance: aimed fans
+    Phase(.66, STAND, count=16, spread=TAU, aimed=False, spin=.4, interval=1.5, bullet_speed=170.),           # stands: rings that turn
+    Phase(.33, CHASE, speed=90., count=3, spread=TAU, aimed=False, spin=2.4, interval=.16, bullet_speed=180., bullet_life=2.2)))   # charges: a spiral
+                                                                                     # the boss of every 5th floor
+
+ENEMY_KINDS = (CHASER, SHOOTER, STALKER, FLANKER, WARDEN)
 
 
 def table(kinds=None):

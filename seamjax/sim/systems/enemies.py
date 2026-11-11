@@ -48,6 +48,10 @@ def spawn(s, key, sec):
     frac = jnp.where(jnp.any(ok0), jnp.sum(mine)/jnp.maximum(jnp.sum(ok0), 1), 1.)          # a section only holds its share of the room
     cap = jnp.maximum(1, jnp.round(dun.area[room]*frac/AREA_PER_ENEMY).astype(jnp.int32)) + jnp.where(isx, 1, 0)
     cnt = jnp.minimum(jnp.minimum(MAX_SPAWN, want), cap)
+    pad = dun.pad[room]; pad_sec = eff_sec(s, room, sec_point(dun, room, pad[0], pad[1]))
+    boss_on = [isx & (dun.floor % bk.boss_every == 0) & (sec == pad_sec) for _, bk in kinds.bosses()]     # a boss floor's exit section
+    if boss_on:                                                      # the boss takes a place of the room's capacity; fewer others with it
+        on = jnp.any(jnp.stack(boss_on)); cnt = jnp.where(on, jnp.minimum(jnp.minimum(cnt, cap-len(boss_on)), MAX_SPAWN//2), cnt)
     minD = jnp.clip(dun.radius[room]*.55, SPAWN_MIN, SPAWN_MAX)
     dpl = jnp.hypot(pts[:, 0]-s.player.x, pts[:, 1]-s.player.y)
     okp = mine & (dpl >= minD*.6)
@@ -60,9 +64,10 @@ def spawn(s, key, sec):
                   fire=of('first_shot', kind) + jax.random.uniform(k4, (NE,))*of('first_shot_rand', kind), telegraph=jnp.full(NE, TELEGRAPH),
                   flash=jnp.zeros(NE), alive=okp[order] & (jnp.arange(NE) < cnt), phase=jnp.zeros(NE, jnp.int32), ptimer=jnp.zeros(NE))
     rows = pool.fill(s.enemies[room], new)                           # into free slots: the other section's enemies stay
-    for bi, bk in kinds.bosses():                                    # a boss floor: the boss waits in the exit pad's section
-        pad = dun.pad[room]; on = isx & (dun.floor % bk.boss_every == 0) & (sec == eff_sec(s, room, sec_point(dun, room, pad[0], pad[1])))
-        far = jnp.argmax(jnp.where(mine, dpl, -1.)); x = jnp.where(jnp.any(mine), pts[far, 0], CX); y = jnp.where(jnp.any(mine), pts[far, 1], CY)
+    for (bi, bk), on in zip(kinds.bosses(), boss_on):                 # a boss floor: the boss waits in the exit pad's section
+        safe = mine & (dpl >= minD*.6); dc = jnp.hypot(pts[:, 0]-CX, pts[:, 1]-CY)       # nearest the middle (its rings fill the room), not on you
+        at = jnp.where(jnp.any(safe), jnp.argmin(jnp.where(safe, dc, 1e9)), jnp.argmax(jnp.where(mine, dpl, -1.)))
+        x = jnp.where(jnp.any(mine), pts[at, 0], CX); y = jnp.where(jnp.any(mine), pts[at, 1], CY)
         rows = pool.spawn(rows, Enemies(x=x, y=y, hp=bk.hp+floor*bk.hp_per_floor, kind=bi, fire=PHASE_PAUSE, telegraph=BOSS_TELEGRAPH, flash=0.,
                                         alive=True, phase=0, ptimer=0.), on)
     return s.replace(enemies=pool.set_row(s.enemies, room, rows))
@@ -77,10 +82,9 @@ def shoot(s, key, dt):
     wantf = act & shoots & (efire <= 0)
     efire = jnp.where(wantf, of('reload', en.kind)+jax.random.uniform(key, (NE,))*of('reload_rand', en.kind), efire)
     bspeed, blife = of('bullet_speed', en.kind), of('bullet_life', en.kind)
-    def place(i, eb):
-        new = bullet(en.x[i], en.y[i], edx[i]/ed[i]*bspeed[i], edy[i]/ed[i]*bspeed[i], blife[i])
-        return pool.spawn(eb, new, wantf[i])
-    eb = lax.fori_loop(0, NE, place, s.eb)
+    one = jnp.ones(NE)
+    eb, _ = pool.place(s.eb, bullet(en.x, en.y, edx/ed*bspeed, edy/ed*bspeed, blife, one, one.astype(jnp.int32)*0, one < 0).replace(
+        alive=wantf, hits=jnp.zeros(NE, jnp.int32)))
     return s.replace(eb=eb, enemies=pool.set_row(s.enemies, room, en.replace(fire=efire)))
 
 
