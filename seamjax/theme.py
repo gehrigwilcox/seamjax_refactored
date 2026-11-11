@@ -93,6 +93,7 @@ class Walls:
     door: tuple = (.59, .92, 1.)
     door_other_side: tuple = (1., .745, .43)          # a door on the second side of an inner wall
     hunter_door: tuple = (1., .24, .35)              # where the Hunter will come through (pulses)
+    roamer_door: tuple = (1., .6, .2)                # where a follower will come through (pulses)
     gated_wall: tuple = (.35, .59, 1.)
     solid_wall: tuple = (1., .39, .62)
 
@@ -178,6 +179,8 @@ THEME = Theme(
     enemies=dict(
         chaser=EnemyLook(Look((1., .48, .27)), _kill((1., .48, .27), 'kill_charger')),
         shooter=EnemyLook(Look((.71, .49, 1.)), _kill((.71, .49, 1.), 'kill_shooter')),
+        stalker=EnemyLook(Look((.35, .95, .75)), _kill((.35, .95, .75), 'kill_charger')),
+        flanker=EnemyLook(Look((1., .8, .3), 'pentagon', size=12.), _kill((1., .8, .3), 'kill_shooter')),
     ),
     worlds=dict(
         flat=WorldLook('grid', drone=Sound(synth='drone_flat')),

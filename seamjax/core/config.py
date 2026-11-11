@@ -23,6 +23,7 @@ MAX_ENEMIES = 10            # enemy slots per room
 MAX_PLAYER_BULLETS = 24
 MAX_ENEMY_BULLETS = 24
 MAX_PICKUPS = 6             # health pickup slots per room
+MAX_ROAMERS = 6             # enemies following you between rooms at once
 N_SPAWN_POINTS = 16         # pre-validated enemy spawn points per room
 GEN_CHUNK = int(os.environ.get('SEAM_GEN_CHUNK', 64))     # dungeons generated at once (~4 MB scratch each): bounds GPU memory
 
@@ -44,6 +45,8 @@ PAD_R = 26.                 # stand this close to the exit pad's centre to take 
 ENEMY_BULLET_R = 4.
 HIT_FLASH = .1
 TELEGRAPH = 1.0             # seconds an enemy is shown before it becomes active
+ARRIVE_TELEGRAPH = .5       # the same for a follower coming in through a door
+FOLLOW_STAGGER = .35        # followers leaving a room set off this many seconds apart
 MAX_SPAWN = 8               # enemies spawned at most per section entry
 AREA_PER_ENEMY = 30000.     # room area per enemy (caps the count)
 SPAWN_MIN, SPAWN_MAX = 160., 260.                  # bounds of the minimum spawn distance from the player

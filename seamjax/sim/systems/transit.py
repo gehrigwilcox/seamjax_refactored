@@ -2,9 +2,9 @@
 import jax, jax.numpy as jnp
 from seamjax.core.config import MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB, ENTRY_INSET, HUNTER_GRACE
 from seamjax.core.geometry.view import through_door
-from seamjax.sim.queries import sec_point, eff_sec
+from seamjax.sim.queries import sec_point, eff_sec, hnode
 from seamjax.sim.state import cond, empty_bullets
-from seamjax.sim.systems import enemies
+from seamjax.sim.systems import enemies, roamers
 
 
 def transit(s, ev, side):
@@ -16,6 +16,7 @@ def transit(s, ev, side):
     va, mir = through_door(s.view_angle, s.mirror, side, dun.n[room], arrive, dun.n[nr], dun.flip[room, side])
     door, nrm = dun.sides.door[nr, arrive], dun.sides.normal[nr, arrive]
     x, y = door[0]-nrm[0]*ENTRY_INSET, door[1]-nrm[1]*ENTRY_INSET
+    s = roamers.depart(s, room, hnode(dun, nr, sec_point(dun, nr, x, y)))           # followers set off after you
     left = s.hunter.room == room                                       # leaving the Hunter's room: it follows soon
     hunter = s.hunter.replace(timer=jnp.where(left, jnp.minimum(s.hunter.timer, HUNTER_GRACE), s.hunter.timer),
                               here=jnp.where(left, False, s.hunter.here))

@@ -4,12 +4,13 @@ separate sections, gated ones do not). In your section it chases you. It can be 
 """
 import jax, jax.numpy as jnp
 from seamjax.difficulty import FLOOR_CAP
-from seamjax.core.config import (MAX_SIDES as NS, INF, PLAYER_R, HUNTER_HP, HUNTER_R, HUNTER_SPEED, HUNTER_SPEED_PER_FLOOR, HUNTER_HOP,
+from seamjax.core.config import (INF, PLAYER_R, HUNTER_HP, HUNTER_R, HUNTER_SPEED, HUNTER_SPEED_PER_FLOOR, HUNTER_HOP,
                                  HUNTER_HOP_PER_FLOOR, HUNTER_HOP_MIN, HUNTER_RESPAWN_DELAY, HUNTER_DOOR_INSET)
 from seamjax.core.types import Hunter
 from seamjax.core.geometry.collide import push_out
 from seamjax.sim.queries import room_geom, hnode, player_node
 from seamjax.sim.state import cond, hurt
+from seamjax.sim.systems.routing import next_hop, entry_side
 
 
 def tick(s, ev, dt):
@@ -33,23 +34,16 @@ def tick(s, ev, dt):
     away = ~dead & (hn != pn)
     tm = jnp.where(away, H.timer-dt, H.timer)
     hop = away & (tm <= 0)
-    doors = dun.doors[hr]; arrk = dun.arrive[hr]; nb = jnp.maximum(doors, 0)
-    nbnode = hnode(dun, nb, dun.door_sec[nb, arrk])
-    stepok = (doors >= 0) & (jnp.arange(NS) < dun.n[hr]) & (hnode(dun, hr, dun.door_sec[hr]) == hn)
-    dd = jnp.where(stepok, dun.node_dist[nbnode, pn], INF)
-    bk = jnp.argmin(dd); best = doors[bk]; can = hop & (dd[bk] < INF)
-    arrside = arrk[bk]
-    hroom = jnp.where(can, best, hr); hsec = jnp.where(can, dun.door_sec[best, arrside], H.sec)
+    ok, best, bsec, arrside, nnode = next_hop(dun, hr, H.sec, pn); can = hop & ok
+    hroom = jnp.where(can, best, hr); hsec = jnp.where(can, bsec, H.sec)
     tm = jnp.where(can, jnp.maximum(HUNTER_HOP_MIN, HUNTER_HOP-floor*HUNTER_HOP_PER_FLOOR), tm)
-    arrive_here = can & (nbnode[bk] == pn)
+    arrive_here = can & (nnode == pn)
     door, nrm = sides.door[arrside], sides.normal[arrside]
     hx = jnp.where(arrive_here, door[0]-nrm[0]*HUNTER_DOOR_INSET, H.x); hy = jnp.where(arrive_here, door[1]-nrm[1]*HUNTER_DOOR_INSET, H.y)
     here = jnp.where(arrive_here, True, jnp.where(away, False, H.here))
     # --- in the player's section: chase
     inroom = ~dead & (hnode(dun, hroom, hsec) == pn)
-    rd = dun.doors[room]
-    okk = (rd >= 0) & (jnp.arange(NS) < n) & (hnode(dun, room, dun.door_sec[room]) == pn)
-    k0 = jnp.where(jnp.any(okk), jnp.argmax(okk), 0); door0, nrm0 = sides.door[k0], sides.normal[k0]
+    k0 = entry_side(dun, room, pn); door0, nrm0 = sides.door[k0], sides.normal[k0]
     place0 = inroom & ~here                                                  # already in your section (e.g. you walked in): put it at a door
     hx = jnp.where(place0, door0[0]-nrm0[0]*HUNTER_DOOR_INSET, hx); hy = jnp.where(place0, door0[1]-nrm0[1]*HUNTER_DOOR_INSET, hy)
     here = here | place0

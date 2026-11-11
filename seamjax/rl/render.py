@@ -6,6 +6,7 @@ Use it for pixel-observation agents or for looking at what the GPU simulation is
 """
 import numpy as np, jax, jax.numpy as jnp
 from seamjax.sim.queries import room_obs, hunter_door, hunter_visible
+from seamjax.sim.systems.roamers import warn_sides
 from seamjax.core.geometry.view import view_vec, rot_inv
 from seamjax.core.config import CX, CY, VIEW_W as VW, VIEW_H as VH, DOOR_GAP as GAP, PLAYER_R as PR, MAX_SIDES as NS, MAX_PICKUPS as NPK, \
     MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB
@@ -38,7 +39,7 @@ def render(s, H=100, W=160):
     pkx, pky = jax.vmap(toscr)(pk.x, pk.y); plx, ply = toscr(s.player.x, s.player.y); hx, hy = toscr(s.hunter.x, s.hunter.y)
     padx, pady = toscr(dun.pad[room, 0], dun.pad[room, 1])
     hv = hunter_visible(s)
-    warn_side = hunter_door(s)                                                # door the Hunter will come through
+    warn_side = hunter_door(s); rwarn = warn_sides(s)                         # doors the Hunter / a follower will come through
     dsec2 = (dun.door_sec[room] > 0) & (dun.wall_kind[room] > 0)              # doors on the second side of an inner wall are orange
     sc = jnp.array([VW/W, VH/H]); ks = jnp.arange(NS)
     def pixel(yx):
@@ -54,7 +55,7 @@ def render(s, H=100, W=160):
         doorline = band & gap[kmax]
         col = jnp.where(inside, floor_c + .5*(floor_hi-floor_c)*(((lx//44).astype(jnp.int32)+(ly//44).astype(jnp.int32)) % 2 == 0), 0.)
         col = jnp.where(wall, wall_c, col)
-        col = jnp.where(doorline, jnp.where(kmax == warn_side, jnp.array(TW.hunter_door), jnp.where(dsec2[kmax], jnp.array(TW.door_other_side), jnp.array(TW.door))), col)
+        col = jnp.where(doorline, jnp.where(kmax == warn_side, jnp.array(TW.hunter_door), jnp.where(rwarn[kmax], jnp.array(TW.roamer_door), jnp.where(dsec2[kmax], jnp.array(TW.door_other_side), jnp.array(TW.door)))), col)
         # obstacles
         def one(kind, p, z):
             circ = jnp.hypot(lx-p[0], ly-p[1]) < z[0]

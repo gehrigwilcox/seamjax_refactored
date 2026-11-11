@@ -17,6 +17,10 @@ import numpy as np
 # behaviours (how a kind moves; see sim/systems/enemies.py)
 CHASE = 0           # straight at you
 SKIRMISH = 1        # keep a distance: back off when close, close in when far, else strafe round you
+# routes (how a follower comes after you through the dungeon; see sim/systems/roamers.py)
+DIRECT = 0          # the true shortest route
+FLANK = 1           # through a room next to yours, so it comes in by another door than you did
+DETOUR = 2          # via a random room first, at most 4 doors out of its way
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,10 @@ class EnemyKind:
     bullet_speed: float = 190.
     bullet_life: float = 3.
     share: tuple = None             # (base, per_floor, lo, hi): share of spawns, or None for "the rest"
+    follows: bool = False           # leaves the room when you do and comes after you through the dungeon
+    route: int = DIRECT             # how it comes after you (DIRECT / FLANK / DETOUR)
+    hop: float = 2.                 # seconds per door while following
+    follow_delay: float = 1.        # seconds before it sets off after you (followers set off one after another)
 
 
 CHASER = EnemyKind('chaser', radius=12., hp=3., behaviour=CHASE, speed=70., speed_per_floor=7.)

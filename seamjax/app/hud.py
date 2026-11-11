@@ -88,7 +88,7 @@ def draw_debug(cv, sn, room, M, world, dbg):
                  ' (open)' if bool(sn.wall_open) else ''),
              'hunter room %d section %d  doors away %d  here %s   enemies %d   sections spawned %s' % (
                  int(H.room), int(H.sec), int(sn.hunter_dist), bool(H.here), int(np.asarray(sn.enemies.alive).sum()), np.asarray(sn.spawned).astype(int).tolist()),
-             'green dot = enemy spawn point (orange: other side of a wall)   ->N = door to room N',
+             'followers on the way %d   green dot = enemy spawn point (orange: other side of a wall)   ->N = door to room N' % int(np.asarray(sn.roamers.alive).sum()),
              '%.0f fps   sim %.1f ms   device read %.1f ms   draw %.1f ms   seed %s   jax: %s' % (dbg.fps, *dbg.ms, dbg.seed, dbg.backend)]
     for i, ln in enumerate(lines): cv.text(ln, 12, 58+i*17, SMALL, (255, 240, 160))
 

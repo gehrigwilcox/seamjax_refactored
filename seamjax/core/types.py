@@ -144,6 +144,19 @@ class Pickups:
 
 
 @pytree
+class Roamers:
+    """[NR] enemies following you between rooms. While travelling they are only a place on the room graph (room, section);
+    when they reach your section they come in through a door and become ordinary enemies again."""
+    alive: object
+    kind: object        # enemy kind (core/kinds.ENEMY_KINDS)
+    hp: object
+    room: object
+    sec: object
+    timer: object       # time until the next door
+    way: object         # node it heads for first (FLANK / DETOUR), -1 = straight to you
+
+
+@pytree
 class Hunter:
     room: object
     sec: object         # section of its room it is in (matters for solid walls)
@@ -181,6 +194,7 @@ class GameState:
     enemies: Enemies
     pickups: Pickups
     hunter: Hunter
+    roamers: Roamers
     visited: object     # [R] rooms you have been in
     wall_open: object   # [R] the inner wall of the room has opened
     spawned: object     # [R, 2] the section has spawned its enemies

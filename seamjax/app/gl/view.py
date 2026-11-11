@@ -106,8 +106,9 @@ class GLView:
                 (tx, ty), (dx, dy) = c.sides.tangent[k], c.sides.door[k]
                 g0 = np.array(M(dx-tx*DOOR_GAP, dy-ty*DOOR_GAP)); g1 = np.array(M(dx+tx*DOOR_GAP, dy+ty*DOOR_GAP))
                 near, far = (A, B) if np.dot(A-g0, A-g0) < np.dot(B-g0, B-g0) else (B, A)
-                col = np.array(W.hunter_door)*(.55+.45*math.sin(t*8)) if k == hd else np.array(W.door_other_side) if (c.wall_kind > 0 and c.door_sec[k] > 0) else np.array(W.door)
-                segs += [(near, g0, wallc, 4.), (g1, far, wallc, 4.), (g0, g1, col, 8. if k == hd else 5.)]
+                rw = bool(sn.roamer_doors[k]); pulse = .55+.45*math.sin(t*8)
+                col = np.array(W.hunter_door)*pulse if k == hd else np.array(W.roamer_door)*pulse if rw else np.array(W.door_other_side) if (c.wall_kind > 0 and c.door_sec[k] > 0) else np.array(W.door)
+                segs += [(near, g0, wallc, 4.), (g1, far, wallc, 4.), (g0, g1, col, 8. if k == hd or rw else 5.)]
             else: segs.append((A, B, wallc, 4.))
         sa = np.zeros((NSEG, 4), 'f4'); sc = np.zeros((NSEG, 4), 'f4')
         for i, (a, b, col, w) in enumerate(segs[:NSEG]): sa[i] = [*a, *b]; sc[i] = [*col, w]

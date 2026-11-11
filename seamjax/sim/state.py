@@ -7,7 +7,7 @@ to the StepEvents `ev` of this step.
 import jax.numpy as jnp
 from jax import lax
 from seamjax.core.config import MAX_ENEMIES as NE, INVULN
-from seamjax.core.types import Bullets, Enemies, StepEvents
+from seamjax.core.types import Bullets, Enemies, Roamers, StepEvents
 
 
 def empty_bullets(n):
@@ -26,6 +26,10 @@ def class_of(s, name):
 def empty_enemies(R):
     z = jnp.zeros((R, NE)); b = jnp.zeros((R, NE), bool)
     return Enemies(x=z, y=z, hp=z, kind=jnp.zeros((R, NE), jnp.int32), fire=z, telegraph=z, flash=z, alive=b)
+
+def empty_roamers(n):
+    z = jnp.zeros(n); i = jnp.zeros(n, jnp.int32)
+    return Roamers(alive=jnp.zeros(n, bool), kind=i, hp=z, room=i, sec=i, timer=z, way=i-1)
 
 def no_events():
     i0 = jnp.int32(0)

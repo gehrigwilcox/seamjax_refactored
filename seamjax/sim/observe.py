@@ -13,6 +13,7 @@ import jax, jax.numpy as jnp
 from seamjax.difficulty import FLOOR_CAP
 from seamjax.core.config import CX, CY, MAX_SIDES as NS, HUNTER_HP, INF
 from seamjax.sim.state import class_of
+from seamjax.sim.systems.roamers import warn_sides
 from seamjax.core.types import AXIS_H, WALL_GATED
 from seamjax.core.geometry.view import view_vec
 from seamjax.core.geometry.collide import side_dist
@@ -37,7 +38,7 @@ def observe(s):
     dpl = side_dist(sides, P.x, P.y)*sc
     lat = ((sides.door[:, 0]-sides.mid[:, 0])*sides.tangent[:, 0] + (sides.door[:, 1]-sides.mid[:, 1])*sides.tangent[:, 1])*sc
     valid = (jnp.arange(NS) < n).astype(jnp.float32)
-    warn = (jnp.arange(NS) == hunter_door(s)).astype(jnp.float32)
+    warn = ((jnp.arange(NS) == hunter_door(s)) | warn_sides(s)).astype(jnp.float32)          # the Hunter or a follower comes in here
     sf = jnp.stack([valid, nxs*valid, nys*valid, (doors >= 0)*valid, dpl*valid, lat*valid, warn*valid, (dun.door_sec[room] > 0)*valid*(dun.wall_kind[room] > 0)], 1)
     en = s.enemies[room]; alive = en.alive
     rx, ry = en.x-P.x, en.y-P.y

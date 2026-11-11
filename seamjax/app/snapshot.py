@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from seamjax.core.struct import pytree
 from seamjax.core.types import Player, Enemies, Pickups, Bullets, Hunter, Sides, Obstacles
 from seamjax.sim.queries import hunter_door, hunter_dist
+from seamjax.sim.systems.roamers import warn_sides
 
 
 @pytree
@@ -39,6 +40,8 @@ class Snapshot:
     hunter: Hunter
     hunter_door: object # side of this room the Hunter will come through, -1 none
     hunter_dist: object # doors to the Hunter: 0 same section, -1 down, -2 cut off by a wall
+    roamer_doors: object  # [NS] sides of this room a follower will come through
+    roamers: object     # Roamers: enemies following you (for the debug overlay and the minimap)
     wall_open: object   # of the current room
     spawned: object     # [2] sections of the current room that have spawned
     visited: object     # [R]
@@ -54,7 +57,7 @@ def take(s, flags):
     r = s.room; d = s.dun
     return Snapshot(room=r, floor=d.floor, spec=d.spec, start=d.start, exit=d.exit, n_rooms=d.n_rooms, kills=s.kills,
                     view_angle=s.view_angle, mirror=s.mirror, player=s.player, enemies=s.enemies[r], pickups=s.pickups[r], pb=s.pb, eb=s.eb,
-                    hunter=s.hunter, hunter_door=hunter_door(s), hunter_dist=hunter_dist(s), wall_open=s.wall_open[r], spawned=s.spawned[r],
+                    hunter=s.hunter, hunter_door=hunter_door(s), hunter_dist=hunter_dist(s), roamer_doors=warn_sides(s), roamers=s.roamers, wall_open=s.wall_open[r], spawned=s.spawned[r],
                     visited=s.visited, flags=flags)
 
 

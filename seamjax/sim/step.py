@@ -10,7 +10,7 @@ golden trace (tests/golden_test.py) pins it down.
 import jax, jax.numpy as jnp
 from seamjax.core import struct
 from seamjax.sim.state import cond, hurt, no_events
-from seamjax.sim.systems import player, hunter, transit, enemies, projectiles, pickups, rooms
+from seamjax.sim.systems import player, hunter, roamers, transit, enemies, projectiles, pickups, rooms
 
 DT = 1/60.
 
@@ -19,6 +19,7 @@ def step(s, action, dt=DT):
     ev = no_events()
     s = s.replace(player=s.player.replace(inv=s.player.inv-dt))
     s, ev = hunter.tick(s, ev, dt)
+    s, ev = roamers.tick(s, ev, dt)
     s, side = player.move(s, action, dt)
     s_door, ev_door = transit.transit(s, ev, jnp.maximum(side, 0))
     s_room, ev_room = combat(s, ev, action, dt)

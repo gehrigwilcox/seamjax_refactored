@@ -13,9 +13,9 @@ from jax import lax
 from seamjax.difficulty import difficulty
 from seamjax.core import struct
 from seamjax.core import kinds
-from seamjax.core.config import MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB, MAX_PICKUPS as NPK, HUNTER_HP
+from seamjax.core.config import MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB, MAX_PICKUPS as NPK, MAX_ROAMERS as NR, HUNTER_HP
 from seamjax.core.types import Player, Pickups, Hunter, GameState
-from seamjax.sim.state import empty_bullets, empty_enemies, class_of
+from seamjax.sim.state import empty_bullets, empty_enemies, empty_roamers, class_of
 from seamjax.sim.queries import sec_point
 from seamjax.sim.step import step as sim_step, DT
 from seamjax.sim.reward import reward, done as is_done
@@ -53,7 +53,7 @@ class Game:
                       player=Player(x=x, y=y, hp=jnp.asarray(kinds.class_table().max_hp)[cls], inv=0., fire=0., aim=0., cls=jnp.asarray(cls, jnp.int32), swing=0.),
                       pb=empty_bullets(NB), eb=empty_bullets(NEB), enemies=empty_enemies(R), pickups=Pickups(x=z, y=z, alive=jnp.zeros((R, NPK), bool)),
                       hunter=Hunter(room=hroom.astype(jnp.int32), sec=hsec, timer=difficulty(floor)['hunter_first'], here=False, x=0., y=0.,
-                                    hp=HUNTER_HP, dead=0., flash=0.),
+                                    hp=HUNTER_HP, dead=0., flash=0.), roamers=empty_roamers(NR),
                       visited=jnp.zeros(R, bool).at[start].set(True), wall_open=jnp.zeros(R, bool),
                       spawned=jnp.zeros((R, 2), bool).at[start, sec_point(dun, start, x, y)].set(True),       # the start section stays empty
                       t=0., steps=jnp.int32(0), kills=jnp.int32(0), key=k3)

@@ -106,6 +106,10 @@ def draw(cv, L, sn, room, mode, follow, show_hunter, VW, VH, small=19):
         if i == L['start']: cv.disk(x, y+rad+2, 2, (150, 235, 255))
         if i == L['exit'] and (mode == 1 or vis[i]): cv.ring(x, y, rad+3, (140, 255, 215), 2)
         cv.text(str(i), x, y-5, 13, (255, 255, 255) if i == r else (255, 240, 160) if i in nbr else (190, 200, 205), 'c')
+    R = sn.roamers
+    for i in np.where(np.asarray(R.alive))[0]:                                       # followers on the way: small orange dots
+        rr = int(R.room[i])
+        if rr < m and show[rr]: cv.disk(pt(rr)[0]+4, pt(rr)[1]+4, 3, (255, 160, 60))
     hr = int(sn.hunter.room)
     if show_hunter and float(sn.hunter.dead) <= 0 and hr < m and show[hr]: cv.disk(*pt(hr), 5, (255, 70, 90))
     cv.ring(*pt(r), max(4., min(18., L['rr'][r]*sc))+3, (255, 255, 255), 2)

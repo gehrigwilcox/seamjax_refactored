@@ -58,8 +58,9 @@ def draw_room(screen, sn, room, M, t, theme=None):
             tg, dr = room.sides.tangent[k], room.sides.door[k]; g0 = dr-tg*DOOR_GAP; g1 = dr+tg*DOOR_GAP
             near = A if np.dot(A-g0, A-g0) < np.dot(B-g0, B-g0) else B; far = B if near is A else A
             pygame.draw.line(screen, wallcol, M(*near), M(*g0), 4); pygame.draw.line(screen, wallcol, M(*g1), M(*far), 4)
-            col = W.hunter_door if k == hd else W.door_other_side if (room.wall_kind > 0 and room.door_sec[k] > 0) else W.door
-            pygame.draw.line(screen, c255(col), M(*g0), M(*g1), 8 if k == hd else 5)
+            rw = bool(sn.roamer_doors[k])
+            col = W.hunter_door if k == hd else W.roamer_door if rw else W.door_other_side if (room.wall_kind > 0 and room.door_sec[k] > 0) else W.door
+            pygame.draw.line(screen, c255(col), M(*g0), M(*g1), 8 if k == hd or rw else 5)
         else: pygame.draw.line(screen, wallcol, M(*A), M(*B), 4)
     # obstacles and the inner wall
     ob = room.obstacles
