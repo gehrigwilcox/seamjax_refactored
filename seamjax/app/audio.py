@@ -80,7 +80,11 @@ def descend(key):
     out = (.7*tri+.45*jnp.sin(_phase(f*1.5)))*(1-t/1.1)**1.2*(.8+.2*jnp.sin(TAU*9*t))
     return _norm(_fade(_lp(out, .05+.6*jnp.exp(-2.5*t)), 12), .65)
 
-ONE_SHOTS = dict(shoot=shoot, kill_shooter=lambda k: kill(k, True), kill_charger=lambda k: kill(k, False), hit=hit, heal=heal,
+def swing(key):
+    k1, k2 = jax.random.split(key); t = _t(.17); env = jnp.sin(jnp.pi*t/.17)**2                      # a filtered-noise whoosh
+    return _norm(_fade(_lp(_noise(k2, t.size), .04+.45*env*_jit(k1, .1))*env), .5)
+
+ONE_SHOTS = dict(shoot=shoot, swing=swing, kill_shooter=lambda k: kill(k, True), kill_charger=lambda k: kill(k, False), hit=hit, heal=heal,
                  death=death, hunter_hit=hunter_hit, hunter_die=hunter_die, open=wall_open, descend=descend)
 
 

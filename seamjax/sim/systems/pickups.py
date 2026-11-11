@@ -1,9 +1,10 @@
-"""Health pickups: killed enemies sometimes drop one where they died; walk over one to heal (not above MAX_HP)."""
+"""Health pickups: killed enemies sometimes drop one where they died; walk over one to heal (not above the class's max hp)."""
 import jax, jax.numpy as jnp
 from jax import lax
 from seamjax.difficulty import difficulty
 from seamjax.core import pool
-from seamjax.core.config import MAX_ENEMIES as NE, MAX_PICKUPS as NPK, MAX_HP, PICKUP_R
+from seamjax.core.config import MAX_ENEMIES as NE, MAX_PICKUPS as NPK, PICKUP_R
+from seamjax.sim.state import class_of
 from seamjax.core.types import Pickups
 
 
@@ -16,10 +17,10 @@ def drop(s, killed, key):
 
 
 def take(s, ev):
-    room = s.room; x, y = s.player.x, s.player.y
+    room = s.room; x, y = s.player.x, s.player.y; top = class_of(s, 'max_hp')
     def one(i, c):
         pk, hp, got = c
-        near = pk.alive[i] & (jnp.hypot(pk.x[i]-x, pk.y[i]-y) < PICKUP_R) & (hp < MAX_HP)
+        near = pk.alive[i] & (jnp.hypot(pk.x[i]-x, pk.y[i]-y) < PICKUP_R) & (hp < top)
         return pk.replace(alive=jnp.where(near, pk.alive.at[i].set(False), pk.alive)), hp+near.astype(jnp.int32), got+near.astype(jnp.int32)
     pk, hp, got = lax.fori_loop(0, NPK, one, (s.pickups[room], s.player.hp, jnp.int32(0)))
     return s.replace(pickups=pool.set_row(s.pickups, room, pk), player=s.player.replace(hp=hp)), ev.replace(healed=got)

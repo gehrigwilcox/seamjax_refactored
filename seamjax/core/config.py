@@ -36,6 +36,7 @@ PLAYER_SPEED = 215.
 MAX_HP = 5
 INVULN = 1.                 # seconds of invulnerability after a hit
 AIM_DEADZONE = .25          # the gun fires while the aim stick is held further than this
+SWING_SHOW = .12            # seconds a melee swing stays on screen
 PICKUP_R = 20.              # walk this close to a health pickup to take it
 PAD_R = 26.                 # stand this close to the exit pad's centre to take the stairs
 

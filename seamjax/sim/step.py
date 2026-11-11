@@ -29,8 +29,8 @@ def step(s, action, dt=DT):
 def combat(s, ev, action, dt):
     """everything that happens in a room during a frame you stay in it"""
     k_fire, key = jax.random.split(s.key); key, k_drop = jax.random.split(key); s = s.replace(key=key)
-    s = player.shoot(s, action, dt)
-    s, ev, killed = projectiles.player_bullet_hits(s, ev, dt)
+    s, swung = player.shoot(s, action, dt)
+    s, ev, killed = projectiles.player_bullet_hits(s, ev, dt, swung)
     s = pickups.drop(s, killed, k_drop)
     s = enemies.shoot(s, k_fire, dt)
     s, contact = enemies.move(s, dt)

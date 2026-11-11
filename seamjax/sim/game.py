@@ -12,9 +12,10 @@ import jax, jax.numpy as jnp
 from jax import lax
 from seamjax.difficulty import difficulty
 from seamjax.core import struct
-from seamjax.core.config import MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB, MAX_PICKUPS as NPK, MAX_HP, HUNTER_HP
+from seamjax.core import kinds
+from seamjax.core.config import MAX_PLAYER_BULLETS as NB, MAX_ENEMY_BULLETS as NEB, MAX_PICKUPS as NPK, HUNTER_HP
 from seamjax.core.types import Player, Pickups, Hunter, GameState
-from seamjax.sim.state import empty_bullets, empty_enemies
+from seamjax.sim.state import empty_bullets, empty_enemies, class_of
 from seamjax.sim.queries import sec_point
 from seamjax.sim.step import step as sim_step, DT
 from seamjax.sim.reward import reward, done as is_done
@@ -34,8 +35,8 @@ class Game:
         return cls(gen_source(load_specs() if SP is None else SP))
 
     # ---------------------------------------------------------------- starting
-    def reset(self, key, floor=1, d=None):
-        """a fresh game at `floor` (floor 1 is the start of a run)"""
+    def reset(self, key, floor=1, d=None, cls=0):
+        """a fresh game at `floor` (floor 1 is the start of a run), playing class `cls` (index into kinds.PLAYER_CLASSES)"""
         R = self.R
         k0, k2, k3 = jax.random.split(key, 3)
         dun = self.source(k0, jnp.asarray(floor, jnp.int32), d)
@@ -49,7 +50,7 @@ class Game:
         hsec = jnp.where(dun.wall_kind[hroom] > 0, jax.random.bernoulli(jax.random.fold_in(k2, 3)), False).astype(jnp.int32)
         z = jnp.zeros((R, NPK))
         s = GameState(dun=dun, room=start, view_angle=0., mirror=1.,
-                      player=Player(x=x, y=y, hp=jnp.int32(MAX_HP), inv=0., fire=0., aim=0.),
+                      player=Player(x=x, y=y, hp=jnp.asarray(kinds.class_table().max_hp)[cls], inv=0., fire=0., aim=0., cls=jnp.asarray(cls, jnp.int32), swing=0.),
                       pb=empty_bullets(NB), eb=empty_bullets(NEB), enemies=empty_enemies(R), pickups=Pickups(x=z, y=z, alive=jnp.zeros((R, NPK), bool)),
                       hunter=Hunter(room=hroom.astype(jnp.int32), sec=hsec, timer=difficulty(floor)['hunter_first'], here=False, x=0., y=0.,
                                     hp=HUNTER_HP, dead=0., flash=0.),
@@ -58,16 +59,17 @@ class Game:
                       t=0., steps=jnp.int32(0), kills=jnp.int32(0), key=k3)
         return jax.tree_util.tree_map(jnp.asarray, s)
 
-    def reset_batch(self, keys, floors):
-        return cvmap(self.reset)(keys, floors)
+    def reset_batch(self, keys, floors, classes=None):
+        if classes is None: return cvmap(self.reset)(keys, floors)
+        return cvmap(lambda k, f, c: self.reset(k, f, cls=c))(keys, floors, classes)
 
     def next_state(self, s, key, done, desc):
         """what follows a finished step: death starts a new run at floor 1; stairs continue the run one floor deeper
-        (hp +1, kills / time carried over)"""
+        (hp +1, kills / time carried over). The class stays."""
         floor = jnp.where(done, 1, s.dun.floor+1)
-        n = self.reset(key, floor)
+        n = self.reset(key, floor, cls=s.player.cls)
         keep = desc & ~done
-        return n.replace(player=n.player.replace(hp=jnp.where(keep, jnp.minimum(MAX_HP, s.player.hp+1), n.player.hp)),
+        return n.replace(player=n.player.replace(hp=jnp.where(keep, jnp.minimum(class_of(s, 'max_hp'), s.player.hp+1), n.player.hp)),
                          kills=jnp.where(keep, s.kills, 0), steps=jnp.where(keep, s.steps, 0), t=jnp.where(keep, s.t, 0.))
 
     # ---------------------------------------------------------------- stepping

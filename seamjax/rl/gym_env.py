@@ -23,7 +23,7 @@ from jax import lax
 import gymnasium as gym
 from gymnasium import spaces
 from gymnasium.vector import VectorEnv, AutoresetMode
-from seamjax.core import struct
+from seamjax.core import struct, kinds
 from seamjax.sim.game import Game, info as step_info
 from seamjax.sim.observe import observe, OBS_DIM
 from seamjax.rl.render import render
@@ -53,8 +53,9 @@ def _obs_space(mode, pixels):
 
 class SeamEnv(gym.Env):
     metadata = {'render_modes': ['rgb_array'], 'render_fps': 15}
-    def __init__(self, frame_skip=4, max_steps=5000, start_floor=1, obs_mode='vector', pixels=(100, 160), render_mode=None):
+    def __init__(self, frame_skip=4, max_steps=5000, start_floor=1, obs_mode='vector', pixels=(100, 160), render_mode=None, player_class='gunner'):
         self.C = _core(frame_skip); self.max_steps = max_steps; self.start_floor = start_floor; self.obs_mode = obs_mode
+        self.cls = kinds.class_index(player_class)
         self.pixels = pixels; self.render_mode = render_mode
         self.action_space = spaces.Box(-1., 1., (4,), np.float32)
         self.observation_space = _obs_space(obs_mode, pixels) or spaces.Box(-10., 10., (OBS_DIM,), np.float32)
@@ -68,8 +69,9 @@ class SeamEnv(gym.Env):
         super().reset(seed=seed)
         if seed is not None or self.s is None: self._key = jax.random.PRNGKey(0 if seed is None else seed)
         self._key, k = jax.random.split(self._key)
-        self.s = self.C['reset'](k, (options or {}).get('floor', self.start_floor)); self.n = 0
-        return self._obs(), dict(floor=int(self.s.dun.floor))
+        o = options or {}; cls = kinds.class_index(o['class']) if 'class' in o else self.cls
+        self.s = self.C['reset'](k, o.get('floor', self.start_floor), None, cls); self.n = 0
+        return self._obs(), dict(floor=int(self.s.dun.floor), player_class=kinds.PLAYER_CLASSES[cls].name)
 
     def step(self, action):
         self._key, k = jax.random.split(self._key)
@@ -84,8 +86,9 @@ class SeamVectorEnv(VectorEnv):
     Autoreset is SAME_STEP: when a game ends, the returned obs is already the first obs of the next run and
     the last one of the finished run is in info['final_obs'] (valid where info['_final_obs'])."""
     metadata = {'autoreset_mode': AutoresetMode.SAME_STEP, 'render_modes': []}
-    def __init__(self, num_envs=256, frame_skip=4, max_steps=5000, start_floor=1):
+    def __init__(self, num_envs=256, frame_skip=4, max_steps=5000, start_floor=1, player_class='gunner'):
         self.C = _core(frame_skip); self.num_envs = num_envs; self.max_steps = max_steps; self.start_floor = start_floor
+        self.classes = jnp.full(num_envs, kinds.class_index(player_class), jnp.int32)
         od = OBS_DIM
         self.single_action_space = spaces.Box(-1., 1., (4,), np.float32); self.single_observation_space = spaces.Box(-10., 10., (od,), np.float32)
         self.action_space = spaces.Box(-1., 1., (num_envs, 4), np.float32); self.observation_space = spaces.Box(-10., 10., (num_envs, od), np.float32)
@@ -94,7 +97,7 @@ class SeamVectorEnv(VectorEnv):
     def reset(self, *, seed=None, options=None):
         if seed is not None or self.S is None: self._key = jax.random.PRNGKey(0 if seed is None else seed)
         self._key, k = jax.random.split(self._key)
-        self.S = self.C['reset_b'](jax.random.split(k, self.num_envs), jnp.full(self.num_envs, self.start_floor)); self.n[:] = 0
+        self.S = self.C['reset_b'](jax.random.split(k, self.num_envs), jnp.full(self.num_envs, self.start_floor), self.classes); self.n[:] = 0
         return np.array(self.C['obs_b'](self.S)), {}
 
     def step(self, actions):
@@ -105,7 +108,7 @@ class SeamVectorEnv(VectorEnv):
         over = done | trunc
         obs = np.array(self.C['obs_b'](S))
         if trunc.any():       # time limit: start a new run for those too
-            fresh = self.C['reset_b'](jax.random.split(k, self.num_envs), jnp.full(self.num_envs, self.start_floor))
+            fresh = self.C['reset_b'](jax.random.split(k, self.num_envs), jnp.full(self.num_envs, self.start_floor), self.classes)
             S = struct.where(jnp.asarray(trunc & ~done), fresh, S)
         if over.any():
             info['final_obs'] = obs.copy(); info['_final_obs'] = over     # observation before the reset (valid where over)

@@ -16,7 +16,9 @@ DT = 1/60.
 
 def parse(argv):
     ap = argparse.ArgumentParser(prog='seam', description='Seam: a non-Euclidean roguelike twin-stick shooter')
+    from seamjax.core import kinds
     ap.add_argument('--floor', type=int, default=1); ap.add_argument('--seed', type=int, default=None)
+    ap.add_argument('--class', dest='cls', choices=[c.name for c in kinds.PLAYER_CLASSES], default='gunner', help='player class (core/kinds.py)')
     ap.add_argument('--bot', action='store_true', help='let a simple scripted bot play (demo / smoke test)')
     ap.add_argument('--debug', action='store_true', help='debug overlay (F1) and debug keys (N H G K O T M C B)')
     ap.add_argument('--debug-stairs', action='store_true', help='teleport onto the stairs at frame 30 (tests the descent path)')
@@ -94,7 +96,8 @@ class App:
             self.audio = Audio()
             if not self.audio.ok: print('no sound device (%s); continuing without sound. --mute silences this.' % self.audio.err); self.audio = None
         self.d.message('loading the tiling tables and compiling the game on %s (the first launch takes a while)...' % info['platform'])
-        self.S = Session(a.floor, a.seed if a.seed is not None else int(time.time()) % 100000)
+        from seamjax.core import kinds
+        self.S = Session(a.floor, a.seed if a.seed is not None else int(time.time()) % 100000, kinds.class_index(a.cls))
         self.controls = controls.Controls(self.d.to_logical); self.bot = controls.bot
         self.dbg = hud.Debug(on=a.debug, map_mode=1 if a.debug else 0, map_follow=a.map_follow, seed=a.seed, backend=backend)
         self.toast = hud.Toast(); self.toast.show(['Floor %d' % a.floor], 2.5)

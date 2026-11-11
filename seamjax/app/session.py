@@ -21,8 +21,8 @@ _META = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'specs.
 
 
 class Session:
-    def __init__(self, floor=1, seed=0):
-        self.floor0 = floor
+    def __init__(self, floor=1, seed=0, cls=0):
+        self.floor0 = floor; self.cls = cls                 # player class (kinds.PLAYER_CLASSES); kept on the next floor and new runs
         self.G = G = Game(gen_source(load_specs()))
         self.meta = json.load(open(_META))                  # per world: name, category, corner turn
         self._reset = jax.jit(G.reset)
@@ -45,7 +45,7 @@ class Session:
     # ---------------------------------------------------------------- playing
     def new_run(self):
         self.key, k = jax.random.split(self.key); self.gen += 1
-        self.s = self._reset(k, self.floor0); self.flags = no_flags()
+        self.s = self._reset(k, self.floor0, None, self.cls); self.flags = no_flags()
 
     def step(self, action, god=False):
         if god: self.s = self._cheat['god'](self.s)

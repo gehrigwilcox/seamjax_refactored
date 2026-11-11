@@ -18,7 +18,7 @@ sprite and floor images are loaded once, sprites into one atlas.
 import math, colorsys
 import numpy as np
 import moderngl
-from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R
+from seamjax.core.config import CX, CY, DOOR_GAP, PLAYER_R, HUNTER_R, SWING_SHOW
 from seamjax.core import kinds
 from seamjax import theme as themes
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
@@ -131,8 +131,8 @@ class GLView:
     def _sprites(self, sn, c, M, va, mir, t):
         """one instance row per sprite: centre, radius, quad half-size, shape (or texture), colour + brightness, angle, width"""
         T = self.theme; L = T.looks; rows = []; r = int(sn.room)
-        def add(look, p, rad, inten=1., ext=None, ang=0., colour=None):
-            kind, ln = (SHAPE_TEXTURE, self.tex_index[look.texture]) if look.texture else (SHAPE[look.shape], look.width)
+        def add(look, p, rad, inten=1., ext=None, ang=0., colour=None, ln=None):
+            kind, ln = (SHAPE_TEXTURE, self.tex_index[look.texture]) if look.texture else (SHAPE[look.shape], look.width if ln is None else ln)
             ext = ext if ext is not None else look.extent if look.extent is not None else rad*3.2+8
             col = colour or look.colour
             rows.append([p[0], p[1], rad, ext, kind, col[0], col[1], col[2], look.glow*inten, ang+t*look.spin, ln])
@@ -148,7 +148,8 @@ class GLView:
             rad = look.size or kind.radius; tg = float(en.telegraph[i])
             if tg > 0: add(L['telegraph'], p, rad+4*tg, ext=rad*3+10)
             else: add(look, p, rad, colour=T.flash_colour if en.flash[i] > 0 else None)
-        for bl, lk in ((sn.pb, L['player_bullet']), (sn.eb, L['enemy_bullet'])):
+        pc = kinds.PLAYER_CLASSES[int(sn.player.cls)]; wpn = pc.weapon
+        for bl, lk in ((sn.pb, T.weapon(wpn.name)), (sn.eb, L['enemy_bullet'])):
             for i in np.where(bl.alive)[0]:
                 vx, vy = view_np(va, mir, bl.vx[i], bl.vy[i]); add(lk, M(bl.x[i], bl.y[i]), lk.size, ang=math.atan2(-vy, -vx))
         if hunter_shown(sn):
@@ -156,7 +157,13 @@ class GLView:
                                   colour=T.flash_colour if float(sn.hunter.flash) > 0 else None)
         px = M(float(sn.player.x), float(sn.player.y))
         if not (float(sn.player.inv) > 0 and int(t*20) % 2):                         # blinks while invulnerable
-            add(L['player'], px, L['player'].size or PLAYER_R)
+            lk = T.player(pc.name); add(lk, px, lk.size or PLAYER_R)
+        sw = float(sn.player.swing)
+        if wpn.melee and sw > 0:                                                    # a melee swing: a fan of streaks over the arc
+            lk = T.weapon(wpn.name); aim = float(sn.player.aim)
+            for j in range(11):                                                     # bright at the edge of the swing, fading inward
+                a = aim + wpn.arc*(j/10-.5); dx, dy = view_np(va, mir, math.cos(a), math.sin(a))
+                add(lk, (px[0]+dx*wpn.reach, px[1]+dy*wpn.reach), lk.size or 2., sw/SWING_SHOW, wpn.reach*.3+8, math.atan2(-dy, -dx), ln=wpn.reach*.25)
         ang = float(sn.player.aim); ax, ay = view_np(va, mir, math.cos(ang), math.sin(ang)); add(L['aim'], px, L['aim'].size, ang=math.atan2(ay, ax))
         return np.array(rows[:NSPR], 'f4').reshape(-1, 11), px
 

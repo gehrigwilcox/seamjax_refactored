@@ -26,6 +26,9 @@ penv = gym.make('Seam-v0', obs_mode='pixels', pixels=(60, 96)); po, _ = penv.res
 frame = penv.unwrapped.render(); assert frame.shape == (200, 320, 3)
 # floor option
 e3 = gym.make('Seam-v0'); _, i3 = e3.reset(seed=0, options={'floor': 5}); assert i3['floor'] == 5
+# player classes
+e4 = gym.make('Seam-v0', player_class='blade'); _, i4 = e4.reset(seed=0); assert i4['player_class'] == 'blade'
+_, i5 = e4.reset(seed=0, options={'class': 'scatter'}); assert i5['player_class'] == 'scatter'
 # vector env
 from seamjax import SeamVectorEnv
 V = SeamVectorEnv(num_envs=64)

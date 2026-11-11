@@ -16,7 +16,8 @@ door labels "room id / side of wall", spawn points) and these keys work:
   C  minimap follows you (centred on your room) or stays fixed        (start that way with --map-follow)
   B  print this floor's tiling name and corner-turn angle to the console
 --mute turns the sound off.
-Other flags: --timing (frame-time breakdown in the console), --floor N, --seed S, --bot.
+Other flags: --class gunner|scatter|lancer|blade (player class, see core/kinds.py), --timing (frame-time breakdown in the console),
+--floor N, --seed S, --bot.
 
 Drawing: the room is drawn by the GPU through OpenGL (app/gl/); --software uses the pygame CPU renderer, and is also the automatic fallback.
 Sound is synthesised by JAX (app/audio.py). The viewer itself lives in seamjax/app (main.py is the loop).

@@ -1,6 +1,6 @@
 """Debug-mode changes to the game state (keys N H K O T G in the viewer). Pure functions of a GameState."""
 import jax.numpy as jnp
-from seamjax.core.config import MAX_HP
+from seamjax.sim.state import class_of
 from seamjax.core.types import WALL_GATED
 
 
@@ -11,7 +11,7 @@ def to_stairs(s):
                      enemies=s.enemies.replace(alive=s.enemies.alive.at[ex].set(False)))
 
 def heal(s):
-    return s.replace(player=s.player.replace(hp=jnp.int32(MAX_HP)))
+    return s.replace(player=s.player.replace(hp=class_of(s, 'max_hp')))
 
 def kill_room(s):
     return s.replace(enemies=s.enemies.replace(alive=s.enemies.alive.at[s.room].set(False)))
@@ -24,6 +24,6 @@ def toggle_hunter(s):
     return s.replace(hunter=s.hunter.replace(dead=jnp.where(s.hunter.dead > 1e8, 0., 1e9).astype(jnp.float32)))
 
 def god(s):
-    return s.replace(player=s.player.replace(hp=jnp.int32(MAX_HP), inv=jnp.float32(9.)))
+    return s.replace(player=s.player.replace(hp=class_of(s, 'max_hp'), inv=jnp.float32(9.)))
 
 KEYS = dict(stairs=to_stairs, heal=heal, kill=kill_room, open=open_gate, hunter=toggle_hunter, god=god)

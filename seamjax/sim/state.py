@@ -11,7 +11,17 @@ from seamjax.core.types import Bullets, Enemies, StepEvents
 
 
 def empty_bullets(n):
-    z = jnp.zeros(n); return Bullets(x=z, y=z, vx=z, vy=z, life=z, alive=jnp.zeros(n, bool))
+    z = jnp.zeros(n); i = jnp.zeros(n, jnp.int32); b = jnp.zeros(n, bool)
+    return Bullets(x=z, y=z, vx=z, vy=z, life=z, alive=b, damage=jnp.ones(n), pierce=i, ghost=b, hits=i)
+
+def bullet(x, y, vx, vy, life, damage=1., pierce=0, ghost=False):
+    """one new bullet (for pool.spawn)"""
+    return Bullets(x=x, y=y, vx=vx, vy=vy, life=life, alive=True, damage=damage, pierce=pierce, ghost=ghost, hits=0)
+
+def class_of(s, name):
+    """a column of the player-class table (core/kinds.class_table, read when traced) for this player's class"""
+    from seamjax.core import kinds
+    return jnp.asarray(getattr(kinds.class_table(), name))[s.player.cls]
 
 def empty_enemies(R):
     z = jnp.zeros((R, NE)); b = jnp.zeros((R, NE), bool)

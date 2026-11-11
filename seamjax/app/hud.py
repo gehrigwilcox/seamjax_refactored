@@ -5,7 +5,8 @@ so the same code draws with OpenGL or pygame.
 """
 from dataclasses import dataclass, field
 import numpy as np
-from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, MAX_HP, HUNTER_HP
+from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, HUNTER_HP
+from seamjax.core import kinds
 from seamjax.app import minimap
 from seamjax.app.snapshot import hunter_shown
 from seamjax.app.worldname import explain as explain_world
@@ -50,9 +51,11 @@ def draw(cv, sn, room, M, world, toast, dead, dbg, map_layout=None, bot=False):
     """M maps a room-frame point to the screen; world: the catalogue entry; map_layout: a callable (fetched only when shown)"""
     if hunter_shown(sn):                                                     # Hunter health bar
         x, y = M(float(sn.hunter.x), float(sn.hunter.y)); cv.rect(x-18, y-34, 36, 4, (60, 10, 20)); cv.rect(x-18, y-34, 36*float(sn.hunter.hp)/HUNTER_HP, 4, (255, 93, 115))
-    for i in range(MAX_HP):
+    pc = kinds.PLAYER_CLASSES[int(sn.player.cls)]
+    for i in range(pc.max_hp):
         cv.rect(12+i*22, 10, 16, 16, (255, 92, 115) if i < int(sn.player.hp) else (60, 40, 46), 4)
-    cv.text('Floor %d   kills %d   %s' % (int(sn.floor), int(sn.kills), 'in a wall-split room' if room.wall_axis else ''), 12, 34, FONT, (180, 215, 210))
+    cv.text('Floor %d   kills %d   %s%s' % (int(sn.floor), int(sn.kills), '' if pc is kinds.GUNNER else pc.name+'   ', 'in a wall-split room' if room.wall_axis else ''),
+            12, 34, FONT, (180, 215, 210))
     hd = int(sn.hunter_dist)
     cv.text('Hunter down' if hd == -1 else 'Hunter cut off by a wall' if hd == -2 else 'Hunter in the room' if hd == 0 else 'Hunter %d doors away' % hd,
             VW-12, 12, FONT, (201, 138, 149), 'r')

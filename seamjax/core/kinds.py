@@ -7,7 +7,8 @@ The index of a kind in ENEMY_KINDS is what Enemies.kind stores.
 The share of each kind among spawned enemies depends on the floor: share = clip(base + per_floor*(floor-1), lo, hi);
 the kind with share=None gets what is left.
 
-Also here: the player's gun (BLASTER), as data, ready for more weapons or character classes.
+Also here: player classes (PlayerClass: speed, max hp, weapon) and their weapons (Weapon: fire rate, bullets, damage,
+spread, pierce, melee). Player.cls indexes PLAYER_CLASSES; class 0 is the game as it always was.
 """
 from dataclasses import dataclass, fields
 from types import SimpleNamespace
@@ -54,11 +55,52 @@ def table(kinds=None):
 
 @dataclass(frozen=True)
 class Weapon:
-    delay: float        # seconds between shots
-    speed: float
-    life: float
-    radius: float
-    muzzle: float       # bullets start this far from the shooter's centre
+    name: str
+    delay: float                # seconds between shots (or swings)
+    speed: float = 520.         # bullet speed
+    life: float = .9            # bullet life, seconds
+    radius: float = 3.          # bullet radius
+    muzzle: float = 14.         # bullets start this far from the player's centre
+    damage: float = 1.
+    pellets: int = 1            # bullets per shot, fanned evenly over `spread`
+    spread: float = 0.          # radians, the whole fan
+    pierce: int = 0             # enemies a bullet passes through before it stops (each one is hit once)
+    ghost: bool = False         # bullets pass obstacles and inner walls (never the room's own walls)
+    melee: bool = False         # no bullets: a swing hits every enemy within `reach` and `arc` of the aim
+    reach: float = 0.           # melee: from the player's centre to the edge of the swing
+    arc: float = 0.             # melee: radians, the whole swing
 
 
-BLASTER = Weapon(delay=.14, speed=520., life=.9, radius=3., muzzle=14.)
+@dataclass(frozen=True)
+class PlayerClass:
+    name: str
+    weapon: Weapon
+    speed: float = 215.         # px/s
+    max_hp: int = 5
+
+
+BLASTER = Weapon('blaster', delay=.14)
+SCATTER = Weapon('scatter', delay=.42, speed=480., life=.42, pellets=5, spread=.5)
+LANCE = Weapon('lance', delay=.32, speed=700., life=.8, damage=2., pierce=2, ghost=True)
+BLADE = Weapon('blade', delay=.3, damage=2., melee=True, reach=48., arc=2.2)
+
+GUNNER = PlayerClass('gunner', BLASTER)                                     # class 0: the game as it always was
+SCATTERER = PlayerClass('scatter', SCATTER, speed=205.)
+LANCER = PlayerClass('lancer', LANCE, speed=205., max_hp=4)
+BLADER = PlayerClass('blade', BLADE, speed=235., max_hp=6)
+
+PLAYER_CLASSES = (GUNNER, SCATTERER, LANCER, BLADER)                        # Player.cls indexes this
+
+
+def class_index(name):
+    return [c.name for c in PLAYER_CLASSES].index(name)
+
+
+def class_table(classes=None):
+    """the classes as numpy columns: speed, max_hp, and every weapon field as w_<field> (w_delay, w_pellets, ...)"""
+    classes = PLAYER_CLASSES if classes is None else classes
+    cols = dict(speed=np.array([c.speed for c in classes]), max_hp=np.array([c.max_hp for c in classes], np.int32))
+    for f in fields(Weapon):
+        if f.name != 'name': cols['w_'+f.name] = np.array([getattr(c.weapon, f.name) for c in classes])
+    return SimpleNamespace(**cols)
+

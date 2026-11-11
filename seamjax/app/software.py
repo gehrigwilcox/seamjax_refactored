@@ -4,7 +4,7 @@ import math
 from dataclasses import replace
 import numpy as np
 import pygame
-from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, DOOR_GAP, PLAYER_R, HUNTER_R
+from seamjax.core.config import VIEW_W as VW, VIEW_H as VH, DOOR_GAP, PLAYER_R, HUNTER_R, SWING_SHOW
 from seamjax.core import kinds
 from seamjax.core.types import OBST_NONE, OBST_CIRCLE, WALL_GATED
 from seamjax.core.geometry.view import view_np
@@ -78,7 +78,8 @@ def draw_room(screen, sn, room, M, t, theme=None):
         kind = kinds.ENEMY_KINDS[int(en.kind[i])]; look = T.enemy(kind.name).look; rad = look.size or kind.radius; tg = float(en.telegraph[i])
         if tg > 0: sprite(screen, L['telegraph'], M(en.x[i], en.y[i]), rad+4*tg)
         else: sprite(screen, look, M(en.x[i], en.y[i]), rad, T.flash_colour if en.flash[i] > 0 else None)
-    for bl, lk in ((sn.pb, L['player_bullet']), (sn.eb, L['enemy_bullet'])):
+    pc = kinds.PLAYER_CLASSES[int(sn.player.cls)]; wpn = pc.weapon
+    for bl, lk in ((sn.pb, T.weapon(wpn.name)), (sn.eb, L['enemy_bullet'])):
         if lk.shape == 'streak': lk = replace(lk, shape='disk')                  # no streaks here: a dot
         for i in np.where(bl.alive)[0]: sprite(screen, lk, M(bl.x[i], bl.y[i]), lk.size+1)
     # the Hunter, and you
@@ -86,6 +87,11 @@ def draw_room(screen, sn, room, M, t, theme=None):
         lk = L['hunter']; sprite(screen, lk, M(float(sn.hunter.x), float(sn.hunter.y)), lk.size or HUNTER_R*1.2,
                                  T.flash_colour if float(sn.hunter.flash) > 0 else None, t=t)
     px, py = M(float(sn.player.x), float(sn.player.y))
-    if not (float(sn.player.inv) > 0 and int(t*20) % 2): sprite(screen, L['player'], (px, py), L['player'].size or PLAYER_R)
+    if not (float(sn.player.inv) > 0 and int(t*20) % 2): lk = T.player(pc.name); sprite(screen, lk, (px, py), lk.size or PLAYER_R)
+    if wpn.melee and float(sn.player.swing) > 0:                                  # a melee swing: a fan of lines over the arc
+        col = c255([v*min(1., float(sn.player.swing)/SWING_SHOW+.3) for v in T.weapon(wpn.name).colour])
+        for j in range(7):
+            a = float(sn.player.aim) + wpn.arc*(j/6-.5); dx, dy = view_np(va, mir, math.cos(a), math.sin(a))
+            pygame.draw.line(screen, col, (px+dx*PLAYER_R, py+dy*PLAYER_R), (px+dx*wpn.reach, py+dy*wpn.reach), 2)
     ang = float(sn.player.aim); ax, ay = view_np(va, mir, math.cos(ang), math.sin(ang))
     pygame.draw.line(screen, c255(L['aim'].colour), (px, py), (px+ax*L['aim'].width, py+ay*L['aim'].width), 3)

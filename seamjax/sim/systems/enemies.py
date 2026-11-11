@@ -12,7 +12,8 @@ from seamjax.core import pool
 from seamjax.core.ops import argsort_small
 from seamjax.core import kinds
 from seamjax.core.config import MAX_ENEMIES as NE, N_SPAWN_POINTS, PLAYER_R, TELEGRAPH, MAX_SPAWN, AREA_PER_ENEMY, SPAWN_MIN, SPAWN_MAX
-from seamjax.core.types import Enemies, Bullets
+from seamjax.core.types import Enemies
+from seamjax.sim.state import bullet
 from seamjax.core.geometry.collide import push_out
 from seamjax.sim.queries import room_geom, eff_sec
 
@@ -71,7 +72,7 @@ def shoot(s, key, dt):
     efire = jnp.where(wantf, of('reload', en.kind)+jax.random.uniform(key, (NE,))*of('reload_rand', en.kind), efire)
     bspeed, blife = of('bullet_speed', en.kind), of('bullet_life', en.kind)
     def place(i, eb):
-        new = Bullets(x=en.x[i], y=en.y[i], vx=edx[i]/ed[i]*bspeed[i], vy=edy[i]/ed[i]*bspeed[i], life=blife[i], alive=True)
+        new = bullet(en.x[i], en.y[i], edx[i]/ed[i]*bspeed[i], edy[i]/ed[i]*bspeed[i], blife[i])
         return pool.spawn(eb, new, wantf[i])
     eb = lax.fori_loop(0, NE, place, s.eb)
     return s.replace(eb=eb, enemies=pool.set_row(s.enemies, room, en.replace(fire=efire)))

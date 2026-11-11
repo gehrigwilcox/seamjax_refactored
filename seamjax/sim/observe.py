@@ -11,7 +11,8 @@ The RL observation: egocentric, in screen space (what you see, so a mirrored roo
 """
 import jax, jax.numpy as jnp
 from seamjax.difficulty import FLOOR_CAP
-from seamjax.core.config import CX, CY, MAX_SIDES as NS, MAX_HP, HUNTER_HP, INF
+from seamjax.core.config import CX, CY, MAX_SIDES as NS, HUNTER_HP, INF
+from seamjax.sim.state import class_of
 from seamjax.core.types import AXIS_H, WALL_GATED
 from seamjax.core.geometry.view import view_vec
 from seamjax.core.geometry.collide import side_dist
@@ -30,7 +31,7 @@ def observe(s):
     vx, vy = view_vec(va, mir, x, y)
     hd_ = dun.node_dist[hnode(dun, s.hunter.room, s.hunter.sec), player_node(s)]
     hdist = jnp.where(s.hunter.dead > 0, -1., jnp.where(hd_ >= INF, -2., hd_.astype(jnp.float32)))     # -1 down, -2 cut off by a wall
-    head = jnp.stack([vx*sc, vy*sc, P.hp/MAX_HP, (P.inv > 0).astype(jnp.float32), n/12., mir, jnp.clip(hdist, -2, 12)/12., jnp.minimum(dun.floor, FLOOR_CAP)/FLOOR_CAP])
+    head = jnp.stack([vx*sc, vy*sc, P.hp/class_of(s, 'max_hp'), (P.inv > 0).astype(jnp.float32), n/12., mir, jnp.clip(hdist, -2, 12)/12., jnp.minimum(dun.floor, FLOOR_CAP)/FLOOR_CAP])
     # sides: valid, outward normal (screen), door, signed dist of player, door offset along the side, hunter-arrival door, wall side
     nxs, nys = jax.vmap(lambda a, b: view_vec(va, mir, a, b))(sides.normal[:, 0], sides.normal[:, 1])
     dpl = side_dist(sides, P.x, P.y)*sc

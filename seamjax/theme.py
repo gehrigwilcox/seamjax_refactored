@@ -106,8 +106,16 @@ class Theme:
     walls: Walls = field(default_factory=Walls)
     heartbeat: Sound = None     # loop whose volume follows the Hunter's distance
     flash_colour: tuple = (1., 1., 1.)    # an enemy or the Hunter just hit
+    players: dict = field(default_factory=dict)    # player class name (core/kinds.py) -> Look; default looks['player']
+    weapons: dict = field(default_factory=dict)    # weapon name -> Look of its bullets (or its swing); default looks['player_bullet']
 
     def replace(self, **kw): return replace(self, **kw)
+
+    def player(self, cls_name):
+        return self.players.get(cls_name, self.looks['player'])
+
+    def weapon(self, name):
+        return self.weapons.get(name, self.looks['player_bullet'])
 
     def enemy(self, name):
         """the look of an enemy kind; a kind without one gets a plain grey disk"""
@@ -122,7 +130,7 @@ class Theme:
 
     def textures(self):
         """every texture file the theme uses (sprites first, then floors)"""
-        looks = list(self.looks.values()) + [e.look for e in self.enemies.values()]
+        looks = list(self.looks.values()) + [e.look for e in self.enemies.values()] + list(self.players.values()) + list(self.weapons.values())
         return sorted({l.texture for l in looks if l.texture}), sorted({w.texture for w in self.worlds.values() if w.texture})
 
     def sounds(self):
@@ -135,6 +143,7 @@ class Theme:
 NOTHING = Effect()
 RED = (1., .36, .45)
 GOLD = (1., .89, .48)
+LILAC = (.85, .75, 1.)
 
 def _kill(colour, synth):
     return Effect(sound=Sound(synth=synth), bursts=(Burst(26, colour, 250, .65, 6), Burst(8, (1., 1., 1.), 160, .35, 4)), shake=.28)
@@ -144,6 +153,7 @@ DEFAULT_ENEMY = EnemyLook(Look((.7, .7, .7)), _kill((.7, .7, .7), 'kill_charger'
 THEME = Theme(
     events=dict(
         shoot=Effect(Sound(synth='shoot', volume=.6), (Burst(4, GOLD, 130, .22, 3, spread=.6),)),
+        swing=Effect(Sound(synth='swing', volume=.7), (Burst(6, LILAC, 160, .18, 3, spread=.8),)),
         hit=Effect(Sound(synth='hit', pan=False), (Burst(18, (1., .35, .4), 190, .55, 6),), shake=.9, hit=1.),
         heal=Effect(Sound(synth='heal'), (Burst(14, (1., .45, .6), 120, .7, 5),)),
         death=Effect(Sound(synth='death', pan=False), (Burst(70, (1., .7, .75), 330, 1.1, 8),), shake=1.4),
@@ -176,4 +186,14 @@ THEME = Theme(
         grid=WorldLook('diagonals', drone=Sound(synth='drone_grid')),
     ),
     heartbeat=Sound(synth='heartbeat'),
+    players=dict(                                      # gunner: looks['player']
+        scatter=Look((1., .85, .55), glow=.85, extent=44),
+        lancer=Look((.6, 1., .95), glow=.85, extent=44),
+        blade=Look(LILAC, glow=.85, extent=44),
+    ),
+    weapons=dict(                                      # blaster: looks['player_bullet']
+        scatter=Look(GOLD, 'streak', glow=1.3, size=2.5, extent=30, width=9),
+        lance=Look((.6, 1., .95), 'streak', glow=1.8, size=3, extent=48, width=28),
+        blade=Look(LILAC, 'streak', glow=.55, size=2.),            # the swing: short streaks along the edge of the arc
+    ),
 )

@@ -103,6 +103,8 @@ class Player:
     inv: object         # invulnerability time left
     fire: object        # time until the gun can fire again
     aim: object         # aim angle in the room frame
+    cls: object         # int: player class, index into core/kinds.PLAYER_CLASSES
+    swing: object       # melee: time left showing the last swing (0 when not swinging)
 
 
 @pytree
@@ -114,6 +116,10 @@ class Bullets:
     vy: object
     life: object        # seconds left
     alive: object
+    damage: object      # damage per hit
+    pierce: object      # int: enemies it can still pass through
+    ghost: object       # bool: passes obstacles and inner walls
+    hits: object        # int bitmask: enemy slots (bit i) and the Hunter (bit NE) it already hit
 
 
 @pytree

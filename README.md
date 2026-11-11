@@ -42,7 +42,7 @@ seamjax/            the game (everything needed to play or train)
   core/             the engine core, shared by generator, simulation and renderers
     types.py        typed state: Dungeon, GameState and the entity pools (Bullets, Enemies, Pickups, ...)
     config.py       every constant
-    kinds.py        enemy kinds as data (radius, hp, speed, behaviour, gun, spawn share, colour, sound) and the player's gun
+    kinds.py        enemy kinds (radius, hp, speed, behaviour, gun, spawn share) and player classes with their weapons, as data
     struct.py       @pytree dataclasses (replace, indexing, field-wise where)
     pool.py         fixed-capacity entity pools: first_free / spawn / fill
     ops.py          argsort_small: much faster than jnp.argsort for the tiny per-game arrays
@@ -154,6 +154,11 @@ Enemy count, enemy speed and Hunter speed keep rising until floor 24.
   or a file (`Sound(file='sounds/zap.wav')`); every sprite is a procedural shape or a texture (`Look(colour, texture='textures/x.png')`,
   tinted by the colour); every world's floor is one of four shader patterns or a tiled texture. Both kinds mix freely.
   Gameplay never reads the theme; the pixel renderer (RL image observations) takes its colours from it.
+* Player classes (`core/kinds.py`): gunner (the original game), scatter (5-pellet spread), lancer (shots pierce 2 enemies and
+  pass obstacles and inner walls; 4 hp), blade (a melee swing in an arc; 6 hp). `uv run seam --class blade`;
+  Gymnasium: `gym.make('Seam-v0', player_class='blade')` or `reset(options={'class': 'blade'})`. A class is a speed, a max hp
+  and a `Weapon` row (fire rate, bullet speed and life, damage, pellets and spread, pierce, ghost, melee reach and arc), so a
+  new class or weapon is a new row. The observation does not say which class you play (train one class per agent, for now).
 * Adding an enemy kind: one more `EnemyKind` row in `seamjax/core/kinds.py` (and, for a new way of moving, one more behaviour in
   `sim/systems/enemies.py`). The simulation, observation, renderers and sound all read that table; `tests/kinds_test.py` adds one.
 * The game state is a tree of frozen dataclasses (`seamjax/core/types.py`): `s.player.x`, `s.enemies.alive[room]`, `s.dun.sides.normal`, and so on.
